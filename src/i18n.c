@@ -60,6 +60,17 @@ static const WCHAR *words[T_COUNT][2] = {
     {L"Experimental VxD",L"Экспериментальный VxD"},
     {L"VMM uptime (s)",L"Время работы VMM (с)"},
     {L"VMM free pages",L"Свободных страниц VMM"},
+    {L"CPU Usage",L"ЦП"},
+    {L"Memory",L"Память"},
+    {L"Memory Usage History",L"Хронология памяти"},
+    {L"Physical Memory (K)",L"Физ. память (КБ)"},
+    {L"Page File (K)",L"Подкачка (КБ)"},
+    {L"Virtual Memory (K)",L"Вирт. память (КБ)"},
+    {L"Uptime (s)",L"VMM (с)"},
+    {L"VMM pages",L"Страниц VMM"},
+    {L"CPU: %lu%%",L"ЦП: %lu%%"},
+    {L"CPU: N/A",L"ЦП: Н/Д"},
+    {L"Memory: %lu%%",L"Память: %lu%%"},
 };
 void language_init(BOOL russian)
 {

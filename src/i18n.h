@@ -60,6 +60,17 @@ enum {
     T_DRIVER,
     T_UPTIME,
     T_VMMPAGES,
+    T_CPU_SHORT,
+    T_MEMLOAD_SHORT,
+    T_MEMHISTORY_SHORT,
+    T_PHYSICAL_SHORT,
+    T_PAGING_SHORT,
+    T_VIRTUAL_SHORT,
+    T_UPTIME_SHORT,
+    T_VMMPAGES_SHORT,
+    T_STATCPU_SHORT,
+    T_STATCPUNA_SHORT,
+    T_STATMEM_SHORT,
     T_COUNT
 };
 void language_init(BOOL russian);

@@ -67,26 +67,26 @@ static HWND wait_dialog(void)
     for(i=0;i<100 && !dialog;++i) { EnumWindows(find_dialog,(LPARAM)&dialog);Sleep(30); }
     return dialog;
 }
-static DWORD paint_hash(HWND w)
+static DWORD black_samples(HWND w)
 {
     HDC dc;
     RECT r;
-    DWORD hash=0;
+    DWORD black=0;
     int x,y;
     RedrawWindow(w,NULL,NULL,RDW_INVALIDATE | RDW_UPDATENOW);
     Sleep(50);
     dc=GetDC(w);GetClientRect(w,&r);
     for(y=0;y<r.bottom;y+=7) for(x=0;x<r.right;x+=7)
-        hash=(hash*33)^GetPixel(dc,x,y);
+        if(GetPixel(dc,x,y)==RGB(0,0,0)) ++black;
     ReleaseDC(w,dc);
-    return hash;
+    return black;
 }
 int main(int argc,char **argv)
 {
     STARTUPINFOA start={0};
     PROCESS_INFORMATION process;
     HWND tab,dialog;
-    DWORD before;
+    RECT bounds;
     WCHAR title[100];
     int i,page;
     char command[1024], hold[8];
@@ -99,6 +99,8 @@ int main(int argc,char **argv)
     for(i=0;i<200 && !target;++i) { EnumWindows(find_target,0);Sleep(30); }
     verify(target!=NULL,"application starts");
     if(!target) return 1;
+    GetWindowRect(target,&bounds);
+    verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);
     verify(tab!=NULL,"tab control exists");
     verify(SendMessageA(tab,TCM_GETITEMCOUNT,0,0)==3,"three tabs");
@@ -109,24 +111,21 @@ int main(int argc,char **argv)
     SendMessageA(target,WM_COMMAND,ID_PAUSE,0);
     for(i=0;i<60;++i) {
         page=i%3;change_page(tab,page);
-        MoveWindow(target,8,8,i%2?420:780,i%2?330:580,TRUE);
+        MoveWindow(target,8,8,i%2?400:780,i%2?450:580,TRUE);
         SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
         check_page(page);
     }
     SendMessageA(target,WM_COMMAND,ID_RUSSIAN,0);
     GetWindowTextW(target,title,100);
     verify(title[0]==0x414 && title[1]==0x438,"Russian Unicode title");
-    MoveWindow(target,8,8,420,330,TRUE);
+    MoveWindow(target,8,8,400,450,TRUE);
     for(page=0;page<3;++page) { change_page(tab,page);check_page(page); }
     verify(performance!=NULL,"performance control found");
-    verify((GetWindowLongA(performance,GWL_STYLE)&WS_HSCROLL)!=0,"small window has horizontal scrolling");
-    verify((GetWindowLongA(performance,GWL_STYLE)&WS_VSCROLL)!=0,"small window has vertical scrolling");
-    before=paint_hash(performance);
-    SendMessageA(performance,WM_HSCROLL,SB_BOTTOM,0);
-    verify(paint_hash(performance)!=before,"horizontal scrolling changes the rendered viewport");
-    before=paint_hash(performance);
-    SendMessageA(performance,WM_VSCROLL,SB_BOTTOM,0);
-    verify(paint_hash(performance)!=before,"vertical scrolling changes the rendered viewport");
+    verify((GetWindowLongA(performance,GWL_STYLE)&WS_HSCROLL)==0,"reference minimum needs no horizontal scrolling");
+    verify((GetWindowLongA(performance,GWL_STYLE)&WS_VSCROLL)==0,"reference minimum needs no vertical scrolling");
+    GetClientRect(performance,&bounds);
+    verify(bounds.right>=320 && bounds.bottom>=300,"all compact panels fit the viewport");
+    verify(black_samples(performance)>50,"compact graphs are actually painted");
     MoveWindow(target,8,8,780,580,TRUE);
     verify((GetWindowLongA(performance,GWL_STYLE)&WS_HSCROLL)==0,"horizontal scrollbar hides after expansion");
     verify((GetWindowLongA(performance,GWL_STYLE)&WS_VSCROLL)==0,"vertical scrollbar hides after expansion");
@@ -143,7 +142,7 @@ int main(int argc,char **argv)
     Sleep(200);
     /* Stay on Performance for a screenshot; caller closes after capture. */
     SendMessageA(target,WM_COMMAND,ID_RUSSIAN,0);
-    change_page(tab,2);MoveWindow(target,8,8,420,330,TRUE);
+    change_page(tab,2);MoveWindow(target,8,8,400,450,TRUE);
     GetExitCodeProcess(process.hProcess,&exit_code);
     verify(exit_code==STILL_ACTIVE,"application survives UI stress");
     printf("%d checks, %d failures\n",checks,failures);

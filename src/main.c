@@ -124,6 +124,15 @@ static BOOL CALLBACK enumerate_window(HWND w, LPARAM unused)
     cell(apps, index, 1, pid_text);
     return TRUE;
 }
+static void update_status(void)
+{
+    RECT r;
+    BOOL compact;
+    GetClientRect(main_window,&r);compact=r.right<480;
+    language_status(status_bar,0,system_info.processes_valid?T_STATPROC:T_STATSTALE,system_info.processes,system_info.processes_valid);
+    language_status(status_bar,1,system_info.cpu_valid?(compact?T_STATCPU_SHORT:T_STATCPU):(compact?T_STATCPUNA_SHORT:T_STATCPUNA),system_info.cpu_percent,system_info.cpu_valid);
+    language_status(status_bar,2,compact?T_STATMEM_SHORT:T_STATMEM,system_info.memory.dwMemoryLoad,TRUE);
+}
 static void refresh(void)
 {
     HANDLE snapshot;
@@ -176,9 +185,7 @@ static void refresh(void)
     if (proc_top > 0) ListView_EnsureVisible(procs, proc_top, FALSE);
     tm_memory_sample(&system_info);
     performance_update(graph, &system_info, TRUE);
-    language_status(status_bar,0,system_info.processes_valid?T_STATPROC:T_STATSTALE,system_info.processes,system_info.processes_valid);
-    language_status(status_bar,1,system_info.cpu_valid?T_STATCPU:T_STATCPUNA,system_info.cpu_percent,system_info.cpu_valid);
-    language_status(status_bar,2,T_STATMEM,system_info.memory.dwMemoryLoad,TRUE);
+    update_status();
     refreshing=FALSE;
     update_actions();
 }
@@ -215,6 +222,7 @@ static void layout(void)
     button_width=process_width;
     if(button_width>(cw-2*gap)/3) button_width=(cw-2*gap)/3;
     MoveWindow(apps,0,0,cw,ch-34,TRUE);
+    ListView_SetColumnWidth(apps,0,cw-110);
     MoveWindow(procs,0,0,cw,ch-34,TRUE);
     MoveWindow(graph,0,0,cw,ch,TRUE);
     MoveWindow(end_button,cw-3*button_width-2*gap,ch-25,button_width,24,TRUE);
@@ -222,6 +230,7 @@ static void layout(void)
     MoveWindow(new_button,cw-button_width,ch-25,button_width,24,TRUE);
     MoveWindow(process_end_button,cw-process_width,ch-25,process_width,24,TRUE);
     InvalidateRect(main_window,NULL,TRUE);
+    update_status();
     update_actions();
 }
 static INT_PTR CALLBACK run_dialog(HWND w, UINT msg, WPARAM wp, LPARAM lp)
@@ -406,8 +415,8 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_GETMINMAXINFO:
-        ((MINMAXINFO *)lp)->ptMinTrackSize.x = 420;
-        ((MINMAXINFO *)lp)->ptMinTrackSize.y = 330;
+        ((MINMAXINFO *)lp)->ptMinTrackSize.x = 400;
+        ((MINMAXINFO *)lp)->ptMinTrackSize.y = 450;
         return 0;
     case WM_SIZE: layout(); return 0;
     case WM_NOTIFY:
@@ -501,10 +510,10 @@ void WINAPI WinMainCRTStartup(void)
         if(!create_w) ExitProcess(1);
         w=create_w(WS_EX_CONTROLPARENT,L"Taskmgr95Main",trw(T_TITLE),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,
-            620,440,NULL,create_menu(),instance,NULL);
+            400,450,NULL,create_menu(),instance,NULL);
     } else w = CreateWindowExA(WS_EX_CONTROLPARENT, APP_CLASS, "Task Manager 95",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
-        620, 440, NULL, create_menu(), instance, NULL);
+        400, 450, NULL, create_menu(), instance, NULL);
     if (!w) ExitProcess(1);
     ShowWindow(w, SW_SHOWDEFAULT); UpdateWindow(w);
     while ((result = GetMessageA(&msg, NULL, 0, 0)) > 0) {

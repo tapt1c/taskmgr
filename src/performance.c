@@ -2,7 +2,7 @@
 #include "performance.h"
 #include "i18n.h"
 #define HISTORY 120
-#define MIN_CONTENT_WIDTH 520
+#define MIN_CONTENT_WIDTH 320
 #define MIN_CONTENT_HEIGHT 300
 static TM_SYSTEM data;
 static DWORD memory_history[HISTORY], cpu_history[HISTORY];
@@ -83,9 +83,14 @@ static RECT group(HDC dc, int x, int y, int width, int height, int title)
 static void number(HDC dc, RECT r, int title, DWORD value, BOOL valid)
 {
     char text[40];
-    language_draw(dc,&r,title,DT_LEFT);
+    RECT measure={0,0,0,0}, value_rect=r;
     if (valid) wsprintfA(text, "%lu", value); else lstrcpyA(text, tr(T_NA));
-    if(valid) label(dc,r,text,DT_RIGHT);else language_draw(dc,&r,T_NA,DT_RIGHT);
+    if(valid) DrawTextA(dc,text,-1,&measure,DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+    else language_draw(dc,&measure,T_NA,DT_CALCRECT);
+    value_rect.left=value_rect.right-(measure.right-measure.left);
+    r.right=value_rect.left-5;
+    if(r.right>r.left) language_draw(dc,&r,title,DT_LEFT | DT_END_ELLIPSIS);
+    if(valid) label(dc,value_rect,text,DT_RIGHT);else language_draw(dc,&value_rect,T_NA,DT_RIGHT);
 }
 static void plot(HDC dc, RECT r, const DWORD *values, BOOL meter, BOOL valid, DWORD current)
 {
@@ -139,36 +144,41 @@ static void paint(HDC dc, RECT client)
     RECT r,line;
     HGDIOBJ old_font;
     int width=client.right, height=client.bottom;
-    int top_height=(height-180)/2, meter_width=128, half=(width-28)/2;
+    BOOL compact=width<480;
+    int top_height=(height-(compact?168:180))/2;
+    int meter_width=compact?88:128, half=(width-28)/2;
+    int row_height=compact?14:16, totals_height=compact?70:76;
+    int paging_y, paging_height=compact?60:66;
     if(top_height<60) top_height=60;
+    paging_y=2*top_height+(compact?98:104);
     FillRect(dc,&client,GetSysColorBrush(COLOR_BTNFACE));
     old_font=SelectObject(dc,font);
     SetBkMode(dc,TRANSPARENT); SetTextColor(dc,GetSysColor(COLOR_BTNTEXT));
-    r=group(dc,8,4,meter_width,top_height,T_CPU);
+    r=group(dc,8,4,meter_width,top_height,compact?T_CPU_SHORT:T_CPU);
     plot(dc,r,cpu_history,TRUE,data.cpu_valid,data.cpu_percent);
     r=group(dc,meter_width+16,4,width-meter_width-24,top_height,T_CPUHISTORY);
     plot(dc,r,cpu_history,FALSE,data.cpu_valid,data.cpu_percent);
-    r=group(dc,8,top_height+12,meter_width,top_height,T_MEMLOAD);
+    r=group(dc,8,top_height+12,meter_width,top_height,compact?T_MEMLOAD_SHORT:T_MEMLOAD);
     plot(dc,r,memory_history,TRUE,TRUE,data.memory.dwMemoryLoad);
-    r=group(dc,meter_width+16,top_height+12,width-meter_width-24,top_height,T_MEMHISTORY);
+    r=group(dc,meter_width+16,top_height+12,width-meter_width-24,top_height,compact?T_MEMHISTORY_SHORT:T_MEMHISTORY);
     plot(dc,r,memory_history,FALSE,TRUE,data.memory.dwMemoryLoad);
-    r=group(dc,8,2*top_height+20,half,76,T_TOTALS);
-    line=r; line.bottom=line.top+16;
-    number(dc,line,T_PROCESSES,data.processes,data.processes_valid); line.top+=16;line.bottom+=16;
-    number(dc,line,T_THREADS,data.threads,data.processes_valid); line.top+=16;line.bottom+=16;
-    number(dc,line,T_UPTIME,data.vxd.uptime_ms/1000,data.vxd_valid);
-    r=group(dc,half+20,2*top_height+20,half,76,T_PHYSICAL);
-    line=r;line.bottom=line.top+16;
-    number(dc,line,T_TOTAL,data.memory.dwTotalPhys/1024,TRUE);line.top+=16;line.bottom+=16;
-    number(dc,line,T_AVAILABLE,data.memory.dwAvailPhys/1024,TRUE);line.top+=16;line.bottom+=16;
-    number(dc,line,T_VMMPAGES,data.vxd.free_pages,data.vxd_valid);
-    r=group(dc,8,2*top_height+104,half,66,T_PAGING);
-    line=r;line.bottom=line.top+16;
-    number(dc,line,T_TOTAL,data.memory.dwTotalPageFile/1024,TRUE);line.top+=16;line.bottom+=16;
+    r=group(dc,8,2*top_height+20,half,totals_height,T_TOTALS);
+    line=r; line.bottom=line.top+row_height;
+    number(dc,line,T_PROCESSES,data.processes,data.processes_valid); line.top+=row_height;line.bottom+=row_height;
+    number(dc,line,T_THREADS,data.threads,data.processes_valid); line.top+=row_height;line.bottom+=row_height;
+    number(dc,line,compact?T_UPTIME_SHORT:T_UPTIME,data.vxd.uptime_ms/1000,data.vxd_valid);
+    r=group(dc,half+20,2*top_height+20,half,totals_height,compact?T_PHYSICAL_SHORT:T_PHYSICAL);
+    line=r;line.bottom=line.top+row_height;
+    number(dc,line,T_TOTAL,data.memory.dwTotalPhys/1024,TRUE);line.top+=row_height;line.bottom+=row_height;
+    number(dc,line,T_AVAILABLE,data.memory.dwAvailPhys/1024,TRUE);line.top+=row_height;line.bottom+=row_height;
+    number(dc,line,compact?T_VMMPAGES_SHORT:T_VMMPAGES,data.vxd.free_pages,data.vxd_valid);
+    r=group(dc,8,paging_y,half,paging_height,compact?T_PAGING_SHORT:T_PAGING);
+    line=r;line.bottom=line.top+row_height;
+    number(dc,line,T_TOTAL,data.memory.dwTotalPageFile/1024,TRUE);line.top+=row_height;line.bottom+=row_height;
     number(dc,line,T_AVAILABLE,data.memory.dwAvailPageFile/1024,TRUE);
-    r=group(dc,half+20,2*top_height+104,half,66,T_VIRTUAL);
-    line=r;line.bottom=line.top+16;
-    number(dc,line,T_TOTAL,data.memory.dwTotalVirtual/1024,TRUE);line.top+=16;line.bottom+=16;
+    r=group(dc,half+20,paging_y,half,paging_height,compact?T_VIRTUAL_SHORT:T_VIRTUAL);
+    line=r;line.bottom=line.top+row_height;
+    number(dc,line,T_TOTAL,data.memory.dwTotalVirtual/1024,TRUE);line.top+=row_height;line.bottom+=row_height;
     number(dc,line,T_AVAILABLE,data.memory.dwAvailVirtual/1024,TRUE);
     SelectObject(dc,old_font);
 }
