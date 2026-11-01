@@ -26,10 +26,10 @@ BEGIN
     BEGIN
         BLOCK "040904E4"
         BEGIN
-            VALUE "FileDescription", "Task Manager 95 - alpha 5\0"
+            VALUE "FileDescription", "Task Manager 95 - alpha 6\0"
             VALUE "FileVersion", TM95_VERSION_STRING "\0"
             VALUE "InternalName", "taskmgr95\0"
-            VALUE "OriginalFilename", "taskmgr95-alpha5.exe\0"
+            VALUE "OriginalFilename", "taskmgr95-alpha6.exe\0"
             VALUE "ProductName", "Task Manager 95\0"
             VALUE "ProductVersion", TM95_VERSION_STRING "\0"
         END
@@ -38,4 +38,21 @@ BEGIN
     BEGIN
         VALUE "Translation", 0x0409, 1252
     END
+END
+
+IDD_COLUMNS DIALOG 0, 0, 270, 176
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_CENTER
+CAPTION "Choose Columns"
+FONT 8, "MS Sans Serif"
+BEGIN
+    LTEXT "Select columns, their order and width:", IDC_COLUMN_PROMPT, 8, 8, 254, 12
+    LISTBOX IDC_COLUMNS_LIST, 8, 26, 166, 104, LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP | WS_BORDER
+    PUSHBUTTON "Move Up", IDC_COLUMN_UP, 182, 26, 80, 14
+    PUSHBUTTON "Move Down", IDC_COLUMN_DOWN, 182, 44, 80, 14
+    CONTROL "Show column", IDC_COLUMN_VISIBLE, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP, 182, 65, 80, 20
+    LTEXT "Width (pixels):", IDC_COLUMN_WIDTH_LABEL, 182, 91, 80, 12
+    EDITTEXT IDC_COLUMN_WIDTH, 182, 106, 80, 14, ES_NUMBER | ES_AUTOHSCROLL
+    CONTROL "Fit task width to window", IDC_COLUMN_AUTOFIT, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 135, 254, 14
+    DEFPUSHBUTTON "OK", IDOK, 156, 156, 50, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 212, 156, 50, 14
 END

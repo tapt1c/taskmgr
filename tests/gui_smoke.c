@@ -104,6 +104,143 @@ static int history_plot_height(HWND w)
     ReleaseDC(w,dc);
     return bands>=2?shortest:0;
 }
+static HANDLE app_process;
+static LPVOID remote_buffer;
+static HWND apps_list,fixture_window;
+static HICON fixture_icon;
+static HANDLE fixture_thread_handle;
+static int remote_find(HWND window)
+{
+    LVFINDINFOA info;
+    ZeroMemory(&info,sizeof(info));info.flags=LVFI_PARAM;info.lParam=(LPARAM)window;
+    if(!WriteProcessMemory(app_process,remote_buffer,&info,sizeof(info),NULL)) return -1;
+    return (int)SendMessageA(apps_list,LVM_FINDITEMA,(WPARAM)-1,(LPARAM)remote_buffer);
+}
+static BOOL remote_item(int index,LVITEMA *item)
+{
+    ZeroMemory(item,sizeof(*item));item->mask=LVIF_IMAGE | LVIF_PARAM;item->iItem=index;
+    if(index<0 || !WriteProcessMemory(app_process,remote_buffer,item,sizeof(*item),NULL)) return FALSE;
+    if(!SendMessageA(apps_list,LVM_GETITEMA,0,(LPARAM)remote_buffer)) return FALSE;
+    return ReadProcessMemory(app_process,remote_buffer,item,sizeof(*item),NULL)!=0;
+}
+static BOOL icon_is_colored(int index)
+{
+    RECT r;
+    HDC dc;
+    COLORREF color;
+    int x,y,colored=0;
+    r.left=LVIR_ICON;r.top=r.right=r.bottom=0;
+    SendMessageA(apps_list,LVM_ENSUREVISIBLE,index,FALSE);
+    if(!WriteProcessMemory(app_process,remote_buffer,&r,sizeof(r),NULL)) return FALSE;
+    if(!SendMessageA(apps_list,LVM_GETITEMRECT,index,(LPARAM)remote_buffer)) return FALSE;
+    if(!ReadProcessMemory(app_process,remote_buffer,&r,sizeof(r),NULL)) return FALSE;
+    RedrawWindow(apps_list,NULL,NULL,RDW_INVALIDATE | RDW_UPDATENOW);Sleep(50);
+    dc=GetDC(apps_list);
+    for(y=r.top;y<r.bottom;++y) for(x=r.left;x<r.right;++x) {
+        color=GetPixel(dc,x,y);
+        if(color!=CLR_INVALID && GetRValue(color)>100 && GetGValue(color)>100 && GetBValue(color)<100) ++colored;
+    }
+    ReleaseDC(apps_list,dc);
+    return colored>2;
+}
+static void select_column(HWND dialog,int index)
+{
+    SendDlgItemMessageA(dialog,IDC_COLUMNS_LIST,LB_SETCURSEL,index,0);
+    SendMessageA(dialog,WM_COMMAND,MAKEWPARAM(IDC_COLUMNS_LIST,LBN_SELCHANGE),(LPARAM)GetDlgItem(dialog,IDC_COLUMNS_LIST));
+}
+static void show_column(HWND dialog)
+{
+    CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,BST_CHECKED);
+    SendMessageA(dialog,WM_COMMAND,MAKEWPARAM(IDC_COLUMN_VISIBLE,BN_CLICKED),0);
+}
+static LRESULT CALLBACK fixture_proc(HWND w,UINT message,WPARAM wp,LPARAM lp)
+{
+    if(message==WM_GETICON) return (LRESULT)fixture_icon;
+    if(message==WM_DESTROY) { PostQuitMessage(0);return 0; }
+    return DefWindowProcA(w,message,wp,lp);
+}
+static DWORD WINAPI fixture_thread(LPVOID ready)
+{
+    WNDCLASSA cls={0};
+    MSG message;
+    cls.lpfnWndProc=fixture_proc;cls.hInstance=GetModuleHandleA(NULL);
+    fixture_icon=LoadIconA(cls.hInstance,MAKEINTRESOURCEA(1));
+    cls.hIcon=fixture_icon;cls.lpszClassName="TM95IconFixture";
+    RegisterClassA(&cls);
+    fixture_window=CreateWindowExA(0,cls.lpszClassName,"00 - Icon example",WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        520,40,240,100,NULL,NULL,cls.hInstance,NULL);
+    SetClassLongPtrA(fixture_window,GCLP_HICONSM,(LONG_PTR)fixture_icon);
+    SendMessageA(fixture_window,WM_SETICON,ICON_SMALL,(LPARAM)fixture_icon);
+    PeekMessageA(&message,NULL,0,0,PM_NOREMOVE);
+    SetEvent((HANDLE)ready);
+    while(GetMessageA(&message,NULL,0,0)>0) { TranslateMessage(&message);DispatchMessageA(&message); }
+    return 0;
+}
+static void applications_workflow(HWND tab,HANDLE process)
+{
+    static const DWORD modes[4]={LVS_REPORT,LVS_ICON,LVS_SMALLICON,LVS_LIST};
+    HWND dialog,header;
+    LVITEMA item;
+    int i,index;
+    BOOL modes_ok=TRUE,columns_ok;
+    app_process=process;
+    remote_buffer=VirtualAllocEx(process,NULL,2048,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
+    verify(remote_buffer!=NULL,"can inspect the real applications control");
+    if(!remote_buffer) return;
+    apps_list=FindWindowExA(GetWindow(target,GW_CHILD),NULL,"SysListView32",NULL);
+    /* Find the visible list via the page, irrespective of sibling Z-order. */
+    change_page(tab,0);
+    {
+        HWND page=GetWindow(target,GW_CHILD);
+        while(page) {
+            char name[64];GetClassNameA(page,name,sizeof(name));
+            if(!strcmp(name,"Taskmgr95Page") && IsWindowVisible(page)) {
+                apps_list=GetDlgItem(page,302);break;
+            }
+            page=GetWindow(page,GW_HWNDNEXT);
+        }
+    }
+    {
+        HANDLE ready=CreateEventA(NULL,FALSE,FALSE,NULL);
+        DWORD thread_id;
+        fixture_thread_handle=CreateThread(NULL,0,fixture_thread,ready,0,&thread_id);
+        WaitForSingleObject(ready,5000);CloseHandle(ready);
+    }
+    SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
+    index=remote_find(fixture_window);
+    verify(index>=0 && remote_item(index,&item) && item.iImage>=0 && icon_is_colored(index),"application icon is displayed, including the EXE fallback");
+    for(i=0;i<4;++i) {
+        SendMessageA(target,WM_COMMAND,ID_VIEW_DETAILS+i,0);
+        if(((DWORD)GetWindowLongA(apps_list,GWL_STYLE)&LVS_TYPEMASK)!=modes[i]) modes_ok=FALSE;
+    }
+    verify(modes_ok,"all four view modes work");
+    SendMessageA(target,WM_COMMAND,ID_VIEW_ICONS,0);
+    verify(SendMessageA(apps_list,LVM_GETIMAGELIST,LVSIL_SMALL,0)==0,"icons can be hidden");
+    SendMessageA(target,WM_COMMAND,ID_VIEW_ICONS,0);
+    SendMessageA(target,WM_COMMAND,ID_VIEW_DETAILS,0);
+    PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
+    dialog=wait_dialog();verify(dialog!=NULL,"column editor opens");
+    if(dialog) {
+        select_column(dialog,2);show_column(dialog);
+        SetDlgItemTextA(dialog,IDC_COLUMN_WIDTH,"77");
+        SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_UP,0);
+        select_column(dialog,3);show_column(dialog);
+        select_column(dialog,4);show_column(dialog);
+        SendMessageA(dialog,WM_COMMAND,IDOK,0);
+    }
+    header=(HWND)SendMessageA(apps_list,LVM_GETHEADER,0,0);
+    columns_ok=Header_GetItemCount(header)==5 && ListView_GetColumnWidth(apps_list,1)==77;
+    SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
+    verify(columns_ok && Header_GetItemCount(header)==5,"column visibility, order and width survive refresh");
+    /* A user-resized Task column must not be reset on window resize. */
+    ListView_SetColumnWidth(apps_list,0,190);
+    MoveWindow(target,8,8,780,580,TRUE);
+    verify(ListView_GetColumnWidth(apps_list,0)==190,"manual Task width survives window resize");
+    SendMessageA(target,WM_COMMAND,ID_SORT_PID,0);
+    verify(remote_find(fixture_window)>=0,"sorting retains the application row");
+    SendMessageA(target,WM_COMMAND,ID_VIEW_SMALL,0);
+    VirtualFreeEx(process,remote_buffer,0,MEM_RELEASE);remote_buffer=NULL;
+}
 int main(int argc,char **argv)
 {
     STARTUPINFOA start={0};
@@ -118,12 +255,13 @@ int main(int argc,char **argv)
     start.cb=sizeof(start);
     snprintf(command,sizeof(command),"\"%s\"",argv[1]);
     if(!CreateProcessA(NULL,command,NULL,NULL,FALSE,0,NULL,NULL,&start,&process)) return 2;
+    WaitForInputIdle(process.hProcess,5000);
     expected_pid=process.dwProcessId;
     for(i=0;i<200 && !target;++i) { EnumWindows(find_target,0);Sleep(30); }
     verify(target!=NULL,"application starts");
     if(!target) return 1;
     GetWindowTextW(target,title,100);
-    verify(wcsstr(title,L"alpha 5")!=NULL,"alpha 5 build is running");
+    verify(wcsstr(title,L"alpha 6")!=NULL,"alpha 6 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);
@@ -131,15 +269,16 @@ int main(int argc,char **argv)
     verify(SendMessageA(tab,TCM_GETITEMCOUNT,0,0)==3,"three tabs");
     SendMessageA(target,WM_COMMAND,ID_ENGLISH,0);
     for(page=0;page<3;++page) {
-        change_page(tab,page);Sleep(2200);check_page(page);
+        change_page(tab,page);Sleep(1100);check_page(page);
     }
     SendMessageA(target,WM_COMMAND,ID_PAUSE,0);
-    for(i=0;i<60;++i) {
+    for(i=0;i<6;++i) {
         page=i%3;change_page(tab,page);
         MoveWindow(target,8,8,i%2?400:780,i%2?450:580,TRUE);
         SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
         check_page(page);
     }
+    applications_workflow(tab,process.hProcess);
     SendMessageA(target,WM_COMMAND,ID_RUSSIAN,0);
     GetWindowTextW(target,title,100);
     verify(title[0]==0x414 && title[1]==0x438,"Russian Unicode title");
@@ -173,9 +312,49 @@ int main(int argc,char **argv)
     change_page(tab,2);MoveWindow(target,8,8,400,450,TRUE);
     GetExitCodeProcess(process.hProcess,&exit_code);
     verify(exit_code==STILL_ACTIVE,"application survives UI stress");
+    PostMessageA(target,WM_CLOSE,0,0);
+    verify(WaitForSingleObject(process.hProcess,5000)==WAIT_OBJECT_0,"first process closes cleanly");
+    CloseHandle(process.hProcess);CloseHandle(process.hThread);
+    target=NULL;
+    if(!CreateProcessA(NULL,command,NULL,NULL,FALSE,0,NULL,NULL,&start,&process)) return 2;
+    WaitForInputIdle(process.hProcess,5000);
+    expected_pid=process.dwProcessId;
+    for(i=0;i<200 && !target;++i) { EnumWindows(find_target,0);Sleep(30); }
+    verify(target!=NULL,"application restarts with saved preferences");
+    if(target) {
+        HWND page_window=GetWindow(target,GW_CHILD),restored=NULL;
+        while(page_window) {
+            char name[64];GetClassNameA(page_window,name,sizeof(name));
+            if(!strcmp(name,"Taskmgr95Page") && IsWindowVisible(page_window)) { restored=GetDlgItem(page_window,302);break; }
+            page_window=GetWindow(page_window,GW_HWNDNEXT);
+        }
+        verify(restored && ((DWORD)GetWindowLongA(restored,GWL_STYLE)&LVS_TYPEMASK)==LVS_SMALLICON,
+            "view mode persists after restart");
+        SendMessageA(target,WM_COMMAND,ID_VIEW_DETAILS,0);
+        verify(restored && Header_GetItemCount((HWND)SendMessageA(restored,LVM_GETHEADER,0,0))==5 &&
+            ListView_GetColumnWidth(restored,0)==190 && ListView_GetColumnWidth(restored,1)==77,
+            "column choices and widths persist after restart");
+        SendMessageA(target,WM_COMMAND,ID_SORT_TASK,0);
+        /* Show a compact, useful pair of columns in the captured example. */
+        PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
+        dialog=wait_dialog();
+        if(dialog) {
+            int col;
+            for(col=1;col<5;++col) {
+                select_column(dialog,col);
+                CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,col==2?BST_CHECKED:BST_UNCHECKED);
+                SendMessageA(dialog,WM_COMMAND,MAKEWPARAM(IDC_COLUMN_VISIBLE,BN_CLICKED),0);
+            }
+            CheckDlgButton(dialog,IDC_COLUMN_AUTOFIT,BST_CHECKED);
+            SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_AUTOFIT,0);
+            SendMessageA(dialog,WM_COMMAND,IDOK,0);
+        }
+    }
     printf("%d checks, %d failures\n",checks,failures);
     fflush(stdout);
-    if(GetEnvironmentVariableA("TM95_CAPTURE_HOLD",hold,sizeof(hold))) Sleep(45000);
+    if(GetEnvironmentVariableA("TM95_CAPTURE_HOLD",hold,sizeof(hold))) Sleep(10000);
+    if(fixture_window) PostMessageA(fixture_window,WM_CLOSE,0,0);
+    if(fixture_thread_handle) { WaitForSingleObject(fixture_thread_handle,3000);CloseHandle(fixture_thread_handle); }
     PostMessageA(target,WM_CLOSE,0,0);
     WaitForSingleObject(process.hProcess,5000);
     CloseHandle(process.hProcess);CloseHandle(process.hThread);

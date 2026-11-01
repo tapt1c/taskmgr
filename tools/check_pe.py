@@ -13,6 +13,7 @@ from pathlib import Path
 # Deliberately narrow set of baseline APIs used by this program.
 ALLOWED = {
     'KERNEL32.dll': '''CloseHandle CreateProcessA ExitProcess GetCurrentProcessId
+        GetFullPathNameA GetPrivateProfileIntA GetProcessHeap HeapAlloc HeapReAlloc HeapFree GetTickCount
         GetLastError GetModuleHandleA GetProcAddress GlobalMemoryStatus
         OpenProcess SetPriorityClass TerminateProcess lstrcpyA lstrcatA lstrlenA
         GetVersion GetACP WideCharToMultiByte MultiByteToWideChar GetPrivateProfileStringA
@@ -28,13 +29,15 @@ ALLOWED = {
         MoveWindow PostMessageA PostQuitMessage RegisterClassA SendDlgItemMessageA
         SendMessageA SetForegroundWindow SetTimer SetWindowPos SetWindowTextA
         ShowWindow ShowWindowAsync TranslateMessage UpdateWindow wsprintfA
+        DestroyIcon CheckDlgButton GetDlgItemInt IsDlgButtonChecked SetFocus GetClassNameA
+        GetClassLongA GetWindowLongA SetWindowLongA GetSystemMetrics IsZoomed SendMessageTimeoutA EnableMenuItem
         DrawTextA DrawEdge SetScrollInfo GetScrollInfo GetScrollPos GetSysColor GetSysColorBrush MapWindowPoints InflateRect
         GetWindowRect SetMenu DestroyMenu DrawMenuBar GetDlgItem SetDlgItemTextA'''.split(),
     'GDI32.dll': '''CreatePen DeleteObject GetStockObject LineTo MoveToEx SelectObject
         SetBkMode SetTextColor TextOutA BitBlt CreateCompatibleDC
         CreateCompatibleBitmap DeleteDC CreateSolidBrush SetViewportOrgEx'''.split(),
-    'COMCTL32.DLL': ['InitCommonControls'],
-    'SHELL32.dll': ['ShellAboutA'],
+    'COMCTL32.DLL': ['InitCommonControls', 'ImageList_Create', 'ImageList_Destroy', 'ImageList_GetImageCount', 'ImageList_ReplaceIcon'],
+    'SHELL32.dll': ['ShellAboutA', 'ExtractIconExA'],
     'ADVAPI32.dll': ['RegOpenKeyExA', 'RegQueryValueExA', 'RegCloseKey'],
 }
 

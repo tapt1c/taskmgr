@@ -3,6 +3,7 @@
 #include "resource.h"
 #include "system.h"
 #include "performance.h"
+#include "applications.h"
 #include "i18n.h"
 #include <shellapi.h>
 
@@ -110,20 +111,6 @@ static void update_actions(void)
     EnableWindow(process_end_button, has && can_end && page == 1);
     EnableWindow(switch_button, has && page == 0);
 }
-static BOOL CALLBACK enumerate_window(HWND w, LPARAM unused)
-{
-    char title[256], pid_text[32];
-    DWORD pid;
-    int index;
-    (void)unused;
-    if (!IsWindowVisible(w) || GetWindow(w, GW_OWNER) || w == main_window) return TRUE;
-    if (!GetWindowTextA(w, title, sizeof(title))) return TRUE;
-    GetWindowThreadProcessId(w, &pid);
-    index = row(apps, title, (LPARAM)w);
-    wsprintfA(pid_text, "%lu", pid);
-    cell(apps, index, 1, pid_text);
-    return TRUE;
-}
 static void update_status(void)
 {
     RECT r;
@@ -148,8 +135,7 @@ static void refresh(void)
     had_process = selected(procs, &process_key);
     if (draw_apps) SendMessageA(apps, WM_SETREDRAW, FALSE, 0);
     if (draw_procs) SendMessageA(procs, WM_SETREDRAW, FALSE, 0);
-    SendMessageA(apps, LVM_DELETEALLITEMS, 0, 0);
-    EnumWindows(enumerate_window, 0);
+    applications_refresh(&system_info);
     snapshot = tm_process_snapshot(&system_info);
     system_info.processes_valid = FALSE;
     /* Keep old rows on snapshot failure rather than presenting an empty system. */
@@ -222,7 +208,7 @@ static void layout(void)
     button_width=process_width;
     if(button_width>(cw-2*gap)/3) button_width=(cw-2*gap)/3;
     MoveWindow(apps,0,0,cw,ch-34,TRUE);
-    ListView_SetColumnWidth(apps,0,cw-110);
+    applications_resize(cw);
     MoveWindow(procs,0,0,cw,ch-34,TRUE);
     MoveWindow(graph,0,0,cw,ch,TRUE);
     MoveWindow(end_button,cw-3*button_width-2*gap,ch-25,button_width,24,TRUE);
@@ -232,6 +218,7 @@ static void layout(void)
     InvalidateRect(main_window,NULL,TRUE);
     update_status();
     update_actions();
+    applications_menu_state(page==0);
 }
 static INT_PTR CALLBACK run_dialog(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -325,7 +312,8 @@ static void new_task(HWND w)
 static HMENU create_menu(void)
 {
     HMENU bar=CreateMenu(),file=CreatePopupMenu(),options=CreatePopupMenu();
-    HMENU priority=CreatePopupMenu(),help=CreatePopupMenu(),language=CreatePopupMenu();
+    HMENU priority=CreatePopupMenu(),help=CreatePopupMenu(),language=CreatePopupMenu(),view=CreatePopupMenu();
+    applications_menu(view);
     language_menu(file,MF_STRING,ID_NEW,T_NEW);
     AppendMenuA(file,MF_SEPARATOR,0,NULL);
     language_menu(file,MF_STRING,ID_EXIT,T_EXIT);
@@ -343,12 +331,12 @@ static HMENU create_menu(void)
     language_menu(help,MF_STRING,ID_ABOUT,T_ABOUT);
     language_menu(bar,MF_POPUP,(UINT_PTR)file,T_FILE);
     language_menu(bar,MF_POPUP,(UINT_PTR)options,T_OPTIONS);
+    language_menu(bar,MF_POPUP,(UINT_PTR)view,T_VIEW);
     language_menu(bar,MF_POPUP,(UINT_PTR)help,T_HELP);
     return bar;
 }
 static void localize(void)
 {
-    static const int app_columns[]={T_TASK};
     static const int proc_columns[]={T_IMAGE,-1,T_THREADS,T_BASEPRI,T_PATH};
     TCITEMA tab;
     LVCOLUMNA col;
@@ -368,7 +356,7 @@ static void localize(void)
         SendMessageA(tabs,language_unicode()?TCM_SETITEMW:TCM_SETITEMA,i,(LPARAM)&tab);
     }
     ZeroMemory(&col,sizeof(col));col.mask=LVCF_TEXT;
-    col.pszText=(LPSTR)(language_unicode()?(const void *)trw(app_columns[0]):(const void *)tr(app_columns[0]));SendMessageA(apps,language_unicode()?LVM_SETCOLUMNW:LVM_SETCOLUMNA,0,(LPARAM)&col);
+    applications_localize();
     for(i=0;i<5;++i) {
         col.pszText=(LPSTR)(language_unicode()?(const void *)(proc_columns[i]<0?L"PID":trw(proc_columns[i])):(const void *)(proc_columns[i]<0?"PID":tr(proc_columns[i])));
         SendMessageA(procs,language_unicode()?LVM_SETCOLUMNW:LVM_SETCOLUMNA,i,(LPARAM)&col);
@@ -391,7 +379,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             pages[i]=CreateWindowExA(WS_EX_CONTROLPARENT,PAGE_CLASS,"",
                 WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                 0,0,0,0,w,NULL,instance,NULL);
-        apps=control(pages[0],WC_LISTVIEWA,"",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,ID_APPS);
+        apps=control(pages[0],WC_LISTVIEWA,"",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_AUTOARRANGE | WS_BORDER | WS_TABSTOP,ID_APPS);
         procs=control(pages[1],WC_LISTVIEWA,"",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,ID_PROCS);
         end_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_END);
         switch_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_SWITCH);
@@ -405,7 +393,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         ListView_SetTextBkColor(procs,GetSysColor(COLOR_WINDOW));
         ZeroMemory(&tab,sizeof(tab));tab.mask=TCIF_TEXT;tab.pszText="";
         for(i=0;i<3;++i) SendMessageA(tabs,TCM_INSERTITEMA,i,(LPARAM)&tab);
-        column(apps,0,"",400);column(apps,1,"PID",90);
+        if(!applications_init(apps,w,instance,".\\taskmgr95.ini")) return -1;
         column(procs,0,"",150);column(procs,1,"PID",85);
         column(procs,2,"",70);column(procs,3,"",115);column(procs,4,"",280);
         tm_system_init(&system_info);
@@ -420,6 +408,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_SIZE: layout(); return 0;
     case WM_NOTIFY:
+        applications_notify((NMHDR *)lp);
         if (((NMHDR *)lp)->idFrom == ID_TABS && ((NMHDR *)lp)->code == TCN_SELCHANGE) {
             page = TabCtrl_GetCurSel(tabs); layout();
         }
@@ -427,6 +416,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_TIMER: if (!paused) refresh(); return 0;
     case WM_COMMAND:
+        if(page==0 && applications_command(LOWORD(wp))) { applications_refresh(&system_info);update_actions();return 0; }
         switch (LOWORD(wp)) {
         case ID_NEW: new_task(w); refresh(); break;
         case ID_EXIT: DestroyWindow(w); break;
@@ -469,7 +459,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         }
         }
         return 0;
-    case WM_DESTROY: KillTimer(w, 1); tm_system_close(&system_info); PostQuitMessage(0); return 0;
+    case WM_DESTROY: applications_close();KillTimer(w, 1); tm_system_close(&system_info); PostQuitMessage(0); return 0;
     }
     return main_default(w, msg, wp, lp);
 }
