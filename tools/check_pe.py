@@ -14,7 +14,11 @@ from pathlib import Path
 ALLOWED = {
     'KERNEL32.dll': '''CloseHandle CreateProcessA ExitProcess GetCurrentProcessId
         GetLastError GetModuleHandleA GetProcAddress GlobalMemoryStatus
-        OpenProcess SetPriorityClass TerminateProcess lstrcpyA'''.split(),
+        OpenProcess SetPriorityClass TerminateProcess lstrcpyA lstrcatA lstrlenA
+        GetVersion GetACP WideCharToMultiByte MultiByteToWideChar GetPrivateProfileStringA
+        WritePrivateProfileStringA LoadLibraryA FreeLibrary SetLastError
+        FindResourceA SizeofResource LoadResource LockResource GetTempPathA
+        GetTempFileNameA CreateFileA WriteFile DeleteFileA MoveFileA DeviceIoControl'''.split(),
     'USER32.dll': '''AppendMenuA BeginPaint CheckMenuItem CreateMenu CreatePopupMenu
         CreateWindowExA DefWindowProcA DestroyWindow DialogBoxParamA DispatchMessageA
         EnableWindow EndDialog EndPaint EnumWindows FillRect GetClientRect
@@ -23,10 +27,15 @@ ALLOWED = {
         IsWindow IsWindowVisible KillTimer LoadCursorA LoadIconA MessageBoxA
         MoveWindow PostMessageA PostQuitMessage RegisterClassA SendDlgItemMessageA
         SendMessageA SetForegroundWindow SetTimer SetWindowPos SetWindowTextA
-        ShowWindow ShowWindowAsync TranslateMessage UpdateWindow wsprintfA'''.split(),
+        ShowWindow ShowWindowAsync TranslateMessage UpdateWindow wsprintfA
+        DrawTextA DrawEdge GetSysColor GetSysColorBrush MapWindowPoints InflateRect
+        GetWindowRect SetMenu DestroyMenu DrawMenuBar GetDlgItem SetDlgItemTextA'''.split(),
     'GDI32.dll': '''CreatePen DeleteObject GetStockObject LineTo MoveToEx SelectObject
-        SetBkMode SetTextColor TextOutA'''.split(),
+        SetBkMode SetTextColor TextOutA BitBlt CreateCompatibleDC
+        CreateCompatibleBitmap DeleteDC CreateSolidBrush'''.split(),
     'COMCTL32.DLL': ['InitCommonControls'],
+    'SHELL32.dll': ['ShellAboutA'],
+    'ADVAPI32.dll': ['RegOpenKeyExA', 'RegQueryValueExA', 'RegCloseKey'],
 }
 
 def check(path, objdump):

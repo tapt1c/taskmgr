@@ -5,8 +5,9 @@ STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "New Task"
 FONT 8, "MS Sans Serif"
 BEGIN
-    LTEXT "Enter a program and any command-line arguments:", -1, 8, 8, 224, 12
+    LTEXT "Enter a program and any command-line arguments:", IDC_RUNPROMPT, 8, 8, 224, 12
     EDITTEXT IDC_COMMAND, 8, 24, 224, 14, ES_AUTOHSCROLL
     DEFPUSHBUTTON "OK", IDOK, 124, 54, 50, 14
     PUSHBUTTON "Cancel", IDCANCEL, 182, 54, 50, 14
 END
+IDR_VXD RCDATA "build/tm95stat.vxd"

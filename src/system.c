@@ -12,6 +12,15 @@ BOOL tm_system_init(TM_SYSTEM *sys)
     /* NT Tool Help names include A; Win95 uses the unsuffixed exports. */
     if (!sys->first) sys->first = (TM_PROCESS)GetProcAddress(kernel, "Process32FirstA");
     if (!sys->next) sys->next = (TM_PROCESS)GetProcAddress(kernel, "Process32NextA");
+    if (GetVersion() & 0x80000000UL) {
+        HKEY start;
+        DWORD value, size=sizeof(value), type;
+        if (RegOpenKeyExA(HKEY_DYN_DATA,"PerfStats\\StartStat",0,KEY_READ,&start)==ERROR_SUCCESS) {
+            sys->cpu_started=RegQueryValueExA(start,"KERNEL\\CPUUsage",NULL,&type,(LPBYTE)&value,&size)==ERROR_SUCCESS;
+            RegCloseKey(start);
+        }
+        RegOpenKeyExA(HKEY_DYN_DATA,"PerfStats\\StatData",0,KEY_READ,&sys->cpu_key);
+    }
     return sys->snapshot && sys->first && sys->next;
 }
 HANDLE tm_process_snapshot(TM_SYSTEM *sys)
@@ -23,4 +32,29 @@ void tm_memory_sample(TM_SYSTEM *sys)
 {
     sys->memory.dwLength = sizeof(sys->memory);
     GlobalMemoryStatus(&sys->memory);
+    sys->vxd_valid=driver_sample(&sys->vxd);
+    sys->cpu_valid=FALSE;
+    if(sys->cpu_key) {
+        DWORD size=sizeof(DWORD), type, value;
+        if(RegQueryValueExA(sys->cpu_key,"KERNEL\\CPUUsage",NULL,&type,(LPBYTE)&value,&size)==ERROR_SUCCESS &&
+            type==REG_DWORD && size==sizeof(DWORD) && value<=100) {
+            sys->cpu_valid=TRUE;sys->cpu_percent=value;
+        }
+    }
+}
+
+void tm_system_close(TM_SYSTEM *sys)
+{
+    if(sys->cpu_key) {
+        RegCloseKey(sys->cpu_key);sys->cpu_key=NULL;
+    }
+    if(sys->cpu_started) {
+        HKEY stop;
+        DWORD value,size=sizeof(value),type;
+        if(RegOpenKeyExA(HKEY_DYN_DATA,"PerfStats\\StopStat",0,KEY_READ,&stop)==ERROR_SUCCESS) {
+            RegQueryValueExA(stop,"KERNEL\\CPUUsage",NULL,&type,(LPBYTE)&value,&size);
+            RegCloseKey(stop);
+        }
+    }
+    driver_close();
 }

@@ -1,0 +1,8 @@
+system win_vxd dynamic
+option quiet
+option nodefaultlibs
+option map=build/tm95stat.map
+name build/tm95stat.vxd
+file build/tm95stat.obj
+segment '_LTEXT' PRELOAD NONDISCARDABLE
+export TM95_DDB.1

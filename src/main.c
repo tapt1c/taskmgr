@@ -2,35 +2,40 @@
 #include <commctrl.h>
 #include "resource.h"
 #include "system.h"
+#include "performance.h"
+#include "i18n.h"
+#include <shellapi.h>
 
 #define APP_CLASS "Taskmgr95Main"
-#define GRAPH_CLASS "Taskmgr95Graph"
+#define PAGE_CLASS "Taskmgr95Page"
 #define ID_TABS 301
 #define ID_APPS 302
 #define ID_PROCS 303
 #define ID_END 304
 #define ID_SWITCH 305
-#define HISTORY 120
+
 static HINSTANCE instance;
 static HWND main_window, tabs, apps, procs, status_bar, end_button, switch_button;
-static HWND new_button, graph, memory_text;
+static HWND new_button, graph, pages[3], process_end_button;
 static HFONT ui_font;
 static TM_SYSTEM system_info;
-static DWORD history[HISTORY];
-static unsigned int samples;
+static BOOL creating = TRUE;
+static BOOL refreshing;
+static LRESULT (WINAPI *main_default)(HWND,UINT,WPARAM,LPARAM)=DefWindowProcA;
+static HMENU create_menu(void);
+static void layout(void);
+static void localize(void);
 static int page;
 static BOOL paused, on_top;
 
 static void error_message(HWND owner, const char *operation)
 {
-    char text[256];
-    wsprintfA(text, "%s failed (Windows error %lu).", operation, GetLastError());
-    MessageBoxA(owner, text, "Task Manager 95", MB_OK | MB_ICONEXCLAMATION);
+    language_error(owner,operation,GetLastError());
 }
-static HWND control(const char *cls, const char *text, DWORD style, int id)
+static HWND control(HWND parent, const char *cls, const char *text, DWORD style, int id)
 {
-    HWND w = CreateWindowExA(0, cls, text, WS_CHILD | WS_VISIBLE | style,
-        0, 0, 0, 0, main_window, (HMENU)(INT_PTR)id, instance, NULL);
+    HWND w = CreateWindowExA(0, cls, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style,
+        0, 0, 0, 0, parent, (HMENU)(INT_PTR)id, instance, NULL);
     if (w) SendMessageA(w, WM_SETFONT, (WPARAM)ui_font, TRUE);
     return w;
 }
@@ -92,8 +97,11 @@ static void restore_selection(HWND list, LPARAM key, BOOL valid)
 static void update_actions(void)
 {
     LPARAM key;
-    BOOL has = page < 2 && selected(page == 0 ? apps : procs, &key);
-    EnableWindow(end_button, has);
+    BOOL has;
+    if (creating || refreshing) return;
+    has = page < 2 && selected(page == 0 ? apps : procs, &key);
+    EnableWindow(end_button, has && page == 0);
+    EnableWindow(process_end_button, has && page == 1);
     EnableWindow(switch_button, has && page == 0);
 }
 static BOOL CALLBACK enumerate_window(HWND w, LPARAM unused)
@@ -116,13 +124,15 @@ static void refresh(void)
     PROCESSENTRY32 entry;
     LPARAM app_key = 0, process_key = 0;
     BOOL had_app, had_process;
-    char text[768], value[32];
+    char value[32];
+    BOOL draw_apps = IsWindowVisible(apps), draw_procs = IsWindowVisible(procs);
+    int app_top = ListView_GetTopIndex(apps), proc_top = ListView_GetTopIndex(procs);
     int index;
-    unsigned int i;
+    refreshing=TRUE;
     had_app = selected(apps, &app_key);
     had_process = selected(procs, &process_key);
-    SendMessageA(apps, WM_SETREDRAW, FALSE, 0);
-    SendMessageA(procs, WM_SETREDRAW, FALSE, 0);
+    if (draw_apps) SendMessageA(apps, WM_SETREDRAW, FALSE, 0);
+    if (draw_procs) SendMessageA(procs, WM_SETREDRAW, FALSE, 0);
     SendMessageA(apps, LVM_DELETEALLITEMS, 0, 0);
     EnumWindows(enumerate_window, 0);
     snapshot = tm_process_snapshot(&system_info);
@@ -153,99 +163,68 @@ static void refresh(void)
     }
     restore_selection(apps, app_key, had_app);
     restore_selection(procs, process_key, had_process);
-    SendMessageA(apps, WM_SETREDRAW, TRUE, 0);
-    SendMessageA(procs, WM_SETREDRAW, TRUE, 0);
+    if (draw_apps) SendMessageA(apps, WM_SETREDRAW, TRUE, 0);
+    if (draw_procs) SendMessageA(procs, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(apps, NULL, TRUE); InvalidateRect(procs, NULL, TRUE);
+    if (app_top > 0) ListView_EnsureVisible(apps, app_top, FALSE);
+    if (proc_top > 0) ListView_EnsureVisible(procs, proc_top, FALSE);
     tm_memory_sample(&system_info);
-    if (samples == HISTORY) {
-        for (i = 1; i < HISTORY; ++i) history[i-1] = history[i];
-        --samples;
-    }
-    history[samples++] = system_info.memory.dwMemoryLoad;
-    wsprintfA(text,
-        "Physical memory (KB)\r\nTotal: %lu    Available: %lu\r\nLoad: %lu%%\r\n\r\n"
-        "Page-file capacity (KB)\r\nTotal: %lu    Available: %lu\r\n\r\n"
-        "CPU: unavailable (VxD not implemented)\r\nThreads: %lu%s",
-        system_info.memory.dwTotalPhys / 1024, system_info.memory.dwAvailPhys / 1024,
-        system_info.memory.dwMemoryLoad, system_info.memory.dwTotalPageFile / 1024,
-        system_info.memory.dwAvailPageFile / 1024, system_info.threads,
-        system_info.processes_valid ? "" : " (process data unavailable or stale)");
-    SetWindowTextA(memory_text, text);
-    if (system_info.processes_valid) wsprintfA(text, "Processes: %lu", system_info.processes);
-    else lstrcpyA(text, "Processes: unavailable / stale");
-    SendMessageA(status_bar, SB_SETTEXTA, 0, (LPARAM)text);
-    SendMessageA(status_bar, SB_SETTEXTA, 1, (LPARAM)"CPU: N/A");
-    wsprintfA(text, "Physical memory: %lu%%", system_info.memory.dwMemoryLoad);
-    SendMessageA(status_bar, SB_SETTEXTA, 2, (LPARAM)text);
-    InvalidateRect(graph, NULL, FALSE);
+    performance_update(graph, &system_info, TRUE);
+    language_status(status_bar,0,system_info.processes_valid?T_STATPROC:T_STATSTALE,system_info.processes,system_info.processes_valid);
+    language_status(status_bar,1,system_info.cpu_valid?T_STATCPU:T_STATCPUNA,system_info.cpu_percent,system_info.cpu_valid);
+    language_status(status_bar,2,T_STATMEM,system_info.memory.dwMemoryLoad,TRUE);
+    refreshing=FALSE;
     update_actions();
 }
-static LRESULT CALLBACK graph_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+static LRESULT CALLBACK page_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (msg == WM_PAINT) {
-        PAINTSTRUCT ps;
-        RECT r;
-        HPEN grid_pen, line_pen;
-        HGDIOBJ old_pen;
-        HDC dc = BeginPaint(w, &ps);
-        unsigned int i;
-        int x, y, width, height;
-        GetClientRect(w, &r);
-        FillRect(dc, &r, (HBRUSH)GetStockObject(BLACK_BRUSH));
-        width = r.right > 1 ? r.right - 1 : 1;
-        height = r.bottom > 1 ? r.bottom - 1 : 1;
-        grid_pen = CreatePen(PS_SOLID, 1, RGB(0, 80, 40));
-        line_pen = CreatePen(PS_SOLID, 1, RGB(0, 255, 0));
-        old_pen = SelectObject(dc, grid_pen);
-        for (x = 0; x <= width; x += 20) { MoveToEx(dc, x, 0, NULL); LineTo(dc, x, height); }
-        for (y = 0; y <= height; y += 20) { MoveToEx(dc, 0, y, NULL); LineTo(dc, width, y); }
-        SelectObject(dc, line_pen);
-        for (i = 0; i < samples; ++i) {
-            x = (int)(HISTORY - samples + i) * width / (HISTORY - 1);
-            y = height - (int)history[i] * height / 100;
-            if (i == 0) MoveToEx(dc, x, y, NULL); else LineTo(dc, x, y);
-        }
-        SelectObject(dc, old_pen); DeleteObject(grid_pen); DeleteObject(line_pen);
-        SetTextColor(dc, RGB(0,255,0)); SetBkMode(dc, TRANSPARENT);
-        TextOutA(dc, 6, 6, "Physical memory load (0-100%)", 28);
-        EndPaint(w, &ps);
-        return 0;
-    }
+    if (msg == WM_COMMAND || msg == WM_NOTIFY)
+        return SendMessageA(main_window, msg, wp, lp);
     return DefWindowProcA(w, msg, wp, lp);
 }
 static void layout(void)
 {
-    RECT r, content;
-    int width, height, parts[3];
+    RECT r, content, sr;
+    int width, height, parts[3], i, cw, ch, button_width, gap=6;
+    if (creating || !tabs) return;
     GetClientRect(main_window, &r);
-    width = r.right; height = r.bottom;
+    width=r.right; height=r.bottom;
+    if (width<1 || height<1) return;
     SendMessageA(status_bar, WM_SIZE, 0, 0);
-    parts[0] = width / 3; parts[1] = width * 2 / 3; parts[2] = -1;
+    GetWindowRect(status_bar, &sr);
+    parts[0]=width/3;parts[1]=width*2/3;parts[2]=-1;
     SendMessageA(status_bar, SB_SETPARTS, 3, (LPARAM)parts);
-    MoveWindow(tabs, 8, 8, width - 16, height - 40, TRUE);
-    GetClientRect(tabs, &content);
-    TabCtrl_AdjustRect(tabs, FALSE, &content);
-    content.left += 16; content.top += 16; content.right -= 0; content.bottom -= 0;
-    MoveWindow(apps, content.left, content.top, content.right-content.left-8, content.bottom-content.top-42, TRUE);
-    MoveWindow(procs, content.left, content.top, content.right-content.left-8, content.bottom-content.top-42, TRUE);
-    MoveWindow(graph, content.left, content.top, content.right-content.left-8, 100, TRUE);
-    MoveWindow(memory_text, content.left, content.top+110, content.right-content.left-8, content.bottom-content.top-115, TRUE);
-    MoveWindow(end_button, width-368, height-67, 112, 24, TRUE);
-    MoveWindow(switch_button, width-248, height-67, 112, 24, TRUE);
-    MoveWindow(new_button, width-128, height-67, 112, 24, TRUE);
-    ShowWindow(apps, page == 0 ? SW_SHOW : SW_HIDE);
-    ShowWindow(procs, page == 1 ? SW_SHOW : SW_HIDE);
-    ShowWindow(graph, page == 2 ? SW_SHOW : SW_HIDE);
-    ShowWindow(memory_text, page == 2 ? SW_SHOW : SW_HIDE);
-    ShowWindow(end_button, page < 2 ? SW_SHOW : SW_HIDE);
-    ShowWindow(switch_button, page == 0 ? SW_SHOW : SW_HIDE);
-    SetWindowTextA(end_button, page == 1 ? "End Process" : "End Task");
+    MoveWindow(tabs,8,8,width-16,height-(sr.bottom-sr.top)-16,TRUE);
+    GetClientRect(tabs,&content);
+    TabCtrl_AdjustRect(tabs,FALSE,&content);
+    MapWindowPoints(tabs,main_window,(POINT *)&content,2);
+    InflateRect(&content,-6,-6);
+    cw=content.right-content.left;ch=content.bottom-content.top;
+    for(i=0;i<3;++i) {
+        ShowWindow(pages[i], i==page ? SW_SHOW : SW_HIDE);
+        MoveWindow(pages[i],content.left,content.top,cw,ch,TRUE);
+    }
+    SetWindowPos(pages[page],HWND_TOP,0,0,0,0,SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    button_width=language_russian()?150:116;
+    MoveWindow(apps,0,0,cw,ch-34,TRUE);
+    MoveWindow(procs,0,0,cw,ch-34,TRUE);
+    MoveWindow(graph,0,0,cw,ch,TRUE);
+    MoveWindow(end_button,cw-3*button_width-2*gap,ch-25,button_width,24,TRUE);
+    MoveWindow(switch_button,cw-2*button_width-gap,ch-25,button_width,24,TRUE);
+    MoveWindow(new_button,cw-button_width,ch-25,button_width,24,TRUE);
+    MoveWindow(process_end_button,cw-button_width,ch-25,button_width,24,TRUE);
+    InvalidateRect(main_window,NULL,TRUE);
     update_actions();
 }
 static INT_PTR CALLBACK run_dialog(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)lp;
-    if (msg == WM_INITDIALOG) { SendDlgItemMessageA(w, IDC_COMMAND, EM_SETLIMITTEXT, 1023, 0); return TRUE; }
+    if (msg == WM_INITDIALOG) {
+        language_text(w,T_NEW);
+        language_text(GetDlgItem(w,IDC_RUNPROMPT),T_RUNPROMPT);
+        language_text(GetDlgItem(w,IDCANCEL),T_CANCEL);
+        SendDlgItemMessageA(w, IDC_COMMAND, EM_SETLIMITTEXT, 1023, 0); return TRUE;
+    }
     if (msg == WM_COMMAND) {
         if (LOWORD(wp) == IDCANCEL) { EndDialog(w, 0); return TRUE; }
         if (LOWORD(wp) == IDOK) {
@@ -277,12 +256,12 @@ static void end_selected(void)
     } else if (page == 1 && selected(procs, &key)) {
         pid = (DWORD)key;
         if (!pid || pid == GetCurrentProcessId()) {
-            MessageBoxA(main_window, "This process cannot be ended here.", "Task Manager 95", MB_OK); return;
+            language_message(main_window,T_PROTECTED,T_TITLE,MB_OK); return;
         }
         process = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
         if (!process) { error_message(main_window, "OpenProcess"); return; }
-        if (MessageBoxA(main_window, "End the selected process? Unsaved data will be lost.",
-            "End Process", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
+        if (language_message(main_window,T_CONFIRMEND,
+            T_ENDPROCESS, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
             if (!TerminateProcess(process, 1)) error_message(main_window, "TerminateProcess");
         }
         CloseHandle(process);
@@ -295,30 +274,80 @@ static void priority_selected(DWORD priority)
     if (page != 1 || !selected(procs, &key)) return;
     process = OpenProcess(PROCESS_SET_INFORMATION, FALSE, (DWORD)key);
     if (!process) { error_message(main_window, "OpenProcess"); return; }
-    if (priority != HIGH_PRIORITY_CLASS || MessageBoxA(main_window,
-        "High priority can make Windows unresponsive. Continue?", "Set Priority",
+    if (priority != HIGH_PRIORITY_CLASS || language_message(main_window,
+        T_CONFIRMHIGH,T_PRIORITY,
         MB_YESNO | MB_DEFBUTTON2 | MB_ICONWARNING) == IDYES)
         if (!SetPriorityClass(process, priority)) error_message(main_window, "SetPriorityClass");
     CloseHandle(process);
 }
+static void new_task(HWND w)
+{
+    typedef void (WINAPI *RUN_DIALOG)(HWND,HICON,LPCVOID,LPCVOID,LPCVOID,UINT);
+    HMODULE shell=LoadLibraryA("SHELL32.DLL");
+    RUN_DIALOG run=NULL;
+    /* Ordinal 61 is the historical RunFileDlg, NOT a stable public API.
+       On NT it expects UTF-16; do not pass ANSI there. A custom fallback
+       remains available when the export is missing. */
+    if(shell)
+        run=(RUN_DIALOG)GetProcAddress(shell,(LPCSTR)61);
+    if(run) run(w,NULL,NULL,language_unicode()?(LPCVOID)trw(T_NEW):(LPCVOID)tr(T_NEW),
+        language_unicode()?(LPCVOID)trw(T_RUNPROMPT):(LPCVOID)tr(T_RUNPROMPT),0);
+    else DialogBoxParamA(instance,MAKEINTRESOURCEA(IDD_RUN),w,run_dialog,0);
+    if(shell) FreeLibrary(shell);
+}
 static HMENU create_menu(void)
 {
-    HMENU bar = CreateMenu(), file = CreatePopupMenu(), options = CreatePopupMenu();
-    HMENU priority = CreatePopupMenu(), help = CreatePopupMenu();
-    AppendMenuA(file, MF_STRING, ID_NEW, "&New Task...");
-    AppendMenuA(file, MF_SEPARATOR, 0, NULL); AppendMenuA(file, MF_STRING, ID_EXIT, "E&xit");
-    AppendMenuA(options, MF_STRING, ID_TOP, "Always on &Top");
-    AppendMenuA(options, MF_STRING, ID_PAUSE, "&Pause Updates");
-    AppendMenuA(options, MF_STRING, ID_REFRESH, "&Refresh Now");
-    AppendMenuA(priority, MF_STRING, ID_IDLE, "&Idle");
-    AppendMenuA(priority, MF_STRING, ID_NORMAL, "&Normal");
-    AppendMenuA(priority, MF_STRING, ID_HIGH, "&High...");
-    AppendMenuA(options, MF_POPUP, (UINT_PTR)priority, "Process &Priority");
-    AppendMenuA(help, MF_STRING, ID_ABOUT, "&About");
-    AppendMenuA(bar, MF_POPUP, (UINT_PTR)file, "&File");
-    AppendMenuA(bar, MF_POPUP, (UINT_PTR)options, "&Options");
-    AppendMenuA(bar, MF_POPUP, (UINT_PTR)help, "&Help");
+    HMENU bar=CreateMenu(),file=CreatePopupMenu(),options=CreatePopupMenu();
+    HMENU priority=CreatePopupMenu(),help=CreatePopupMenu(),language=CreatePopupMenu();
+    language_menu(file,MF_STRING,ID_NEW,T_NEW);
+    AppendMenuA(file,MF_SEPARATOR,0,NULL);
+    language_menu(file,MF_STRING,ID_EXIT,T_EXIT);
+    language_menu(options,MF_STRING | (on_top?MF_CHECKED:0),ID_TOP,T_TOP);
+    language_menu(options,MF_STRING | (paused?MF_CHECKED:0),ID_PAUSE,T_PAUSE);
+    language_menu(options,MF_STRING,ID_REFRESH,T_REFRESH);
+    language_menu(options,MF_STRING | (system_info.vxd_valid?MF_CHECKED:0),ID_DRIVER,T_DRIVER);
+    language_menu(priority,MF_STRING,ID_IDLE,T_IDLE);
+    language_menu(priority,MF_STRING,ID_NORMAL,T_NORMAL);
+    language_menu(priority,MF_STRING,ID_HIGH,T_HIGH);
+    language_menu(options,MF_POPUP,(UINT_PTR)priority,T_PRIORITY);
+    AppendMenuA(language,MF_STRING | (!language_russian()?MF_CHECKED:0),ID_ENGLISH,"English");
+    AppendMenuA(language,MF_STRING | (language_russian()?MF_CHECKED:0),ID_RUSSIAN,"Russian");
+    language_menu(options,MF_POPUP,(UINT_PTR)language,T_LANGUAGE);
+    language_menu(help,MF_STRING,ID_ABOUT,T_ABOUT);
+    language_menu(bar,MF_POPUP,(UINT_PTR)file,T_FILE);
+    language_menu(bar,MF_POPUP,(UINT_PTR)options,T_OPTIONS);
+    language_menu(bar,MF_POPUP,(UINT_PTR)help,T_HELP);
     return bar;
+}
+static void localize(void)
+{
+    static const int app_columns[]={T_TASK};
+    static const int proc_columns[]={T_IMAGE,-1,T_THREADS,T_BASEPRI,T_PATH};
+    TCITEMA tab;
+    LVCOLUMNA col;
+    HMENU old=GetMenu(main_window);
+    int i;
+    SetMenu(main_window,create_menu());
+    if(old) DestroyMenu(old);
+    DrawMenuBar(main_window);
+    language_text(main_window,T_TITLE);
+    language_text(end_button,T_ENDTASK);
+    language_text(process_end_button,T_ENDPROCESS);
+    language_text(switch_button,T_SWITCH);
+    language_text(new_button,T_NEW);
+    ZeroMemory(&tab,sizeof(tab));tab.mask=TCIF_TEXT;
+    for(i=0;i<3;++i) {
+        tab.pszText=(LPSTR)(language_unicode()?(const void *)trw(T_APPS+i):(const void *)tr(T_APPS+i));
+        SendMessageA(tabs,language_unicode()?TCM_SETITEMW:TCM_SETITEMA,i,(LPARAM)&tab);
+    }
+    ZeroMemory(&col,sizeof(col));col.mask=LVCF_TEXT;
+    col.pszText=(LPSTR)(language_unicode()?(const void *)trw(app_columns[0]):(const void *)tr(app_columns[0]));SendMessageA(apps,language_unicode()?LVM_SETCOLUMNW:LVM_SETCOLUMNA,0,(LPARAM)&col);
+    for(i=0;i<5;++i) {
+        col.pszText=(LPSTR)(language_unicode()?(const void *)(proc_columns[i]<0?L"PID":trw(proc_columns[i])):(const void *)(proc_columns[i]<0?"PID":tr(proc_columns[i])));
+        SendMessageA(procs,language_unicode()?LVM_SETCOLUMNW:LVM_SETCOLUMNA,i,(LPARAM)&col);
+    }
+    performance_update(graph,&system_info,FALSE);
+    layout();
 }
 static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -326,29 +355,36 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_CREATE: {
         TCITEMA tab;
-        main_window = w;
-        ui_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-        tabs = control(WC_TABCONTROLA, "", WS_TABSTOP, ID_TABS);
-        apps = control(WC_LISTVIEWA, "", LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, ID_APPS);
-        procs = control(WC_LISTVIEWA, "", LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, ID_PROCS);
-        status_bar = control(STATUSCLASSNAMEA, "", SBARS_SIZEGRIP, 0);
-        end_button = control("BUTTON", "End Task", WS_TABSTOP, ID_END);
-        switch_button = control("BUTTON", "Switch To", WS_TABSTOP, ID_SWITCH);
-        new_button = control("BUTTON", "New Task...", WS_TABSTOP, ID_NEW);
-        graph = control(GRAPH_CLASS, "", WS_BORDER, 0);
-        memory_text = control("STATIC", "", 0, 0);
-        if (!tabs || !apps || !procs || !status_bar || !end_button || !switch_button || !new_button || !graph || !memory_text) return -1;
-        ZeroMemory(&tab, sizeof(tab)); tab.mask = TCIF_TEXT;
-        tab.pszText = "Applications"; SendMessageA(tabs, TCM_INSERTITEMA, 0, (LPARAM)&tab);
-        tab.pszText = "Processes"; SendMessageA(tabs, TCM_INSERTITEMA, 1, (LPARAM)&tab);
-        tab.pszText = "Performance"; SendMessageA(tabs, TCM_INSERTITEMA, 2, (LPARAM)&tab);
-        column(apps, 0, "Task", 420); column(apps, 1, "PID", 90);
-        column(procs, 0, "Image Name", 160); column(procs, 1, "PID", 75);
-        column(procs, 2, "Threads", 65); column(procs, 3, "Base Priority", 90);
-        column(procs, 4, "Executable (as reported)", 280);
+        int i;
+        main_window=w;
+        ui_font=(HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        tabs=control(w,WC_TABCONTROLA,"",WS_TABSTOP,ID_TABS);
+        status_bar=control(w,STATUSCLASSNAMEA,"",SBARS_SIZEGRIP,0);
+        for(i=0;i<3;++i)
+            pages[i]=CreateWindowExA(WS_EX_CONTROLPARENT,PAGE_CLASS,"",
+                WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+                0,0,0,0,w,NULL,instance,NULL);
+        apps=control(pages[0],WC_LISTVIEWA,"",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,ID_APPS);
+        procs=control(pages[1],WC_LISTVIEWA,"",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,ID_PROCS);
+        end_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_END);
+        switch_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_SWITCH);
+        new_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_NEW);
+        process_end_button=control(pages[1],"BUTTON","",WS_TABSTOP,ID_END);
+        graph=control(pages[2],TM95_PERF_CLASS,"",0,0);
+        if(!tabs || !apps || !procs || !status_bar || !end_button || !switch_button || !new_button || !process_end_button || !graph || !pages[0] || !pages[1] || !pages[2]) return -1;
+        ListView_SetBkColor(apps,GetSysColor(COLOR_WINDOW));
+        ListView_SetTextBkColor(apps,GetSysColor(COLOR_WINDOW));
+        ListView_SetBkColor(procs,GetSysColor(COLOR_WINDOW));
+        ListView_SetTextBkColor(procs,GetSysColor(COLOR_WINDOW));
+        ZeroMemory(&tab,sizeof(tab));tab.mask=TCIF_TEXT;tab.pszText="";
+        for(i=0;i<3;++i) SendMessageA(tabs,TCM_INSERTITEMA,i,(LPARAM)&tab);
+        column(apps,0,"",400);column(apps,1,"PID",90);
+        column(procs,0,"",150);column(procs,1,"PID",85);
+        column(procs,2,"",70);column(procs,3,"",115);column(procs,4,"",280);
         tm_system_init(&system_info);
-        refresh();
-        if (!SetTimer(w, 1, 1000, NULL)) return -1;
+        creating=FALSE;
+        localize();refresh();
+        if(!SetTimer(w,1,1000,NULL)) return -1;
         return 0;
     }
     case WM_GETMINMAXINFO:
@@ -365,7 +401,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_TIMER: if (!paused) refresh(); return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case ID_NEW: DialogBoxParamA(instance, MAKEINTRESOURCEA(IDD_RUN), w, run_dialog, 0); refresh(); break;
+        case ID_NEW: new_task(w); refresh(); break;
         case ID_EXIT: DestroyWindow(w); break;
         case ID_REFRESH: refresh(); break;
         case ID_END: end_selected(); break;
@@ -384,13 +420,31 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_IDLE: priority_selected(IDLE_PRIORITY_CLASS); break;
         case ID_NORMAL: priority_selected(NORMAL_PRIORITY_CLASS); break;
         case ID_HIGH: priority_selected(HIGH_PRIORITY_CLASS); break;
-        case ID_ABOUT:
-            MessageBoxA(w, "Task Manager 95\r\nNative Win32 prototype\r\nCPU/VxD and networking are not implemented.", "About", MB_OK); break;
+        case ID_DRIVER:
+            if(system_info.vxd_valid) driver_close();
+            else if(!driver_enable(instance)) {
+                SetLastError(driver_error());error_message(w,"VxD");
+            }
+            refresh();localize();break;
+        case ID_ENGLISH:
+        case ID_RUSSIAN:
+            language_init(LOWORD(wp)==ID_RUSSIAN);
+            localize(); refresh();
+            WritePrivateProfileStringA("Interface","Language",language_russian()?"ru":"en",".\\taskmgr95.ini");
+            break;
+        case ID_ABOUT: {
+            int (WINAPI *about_w)(HWND,LPCWSTR,LPCWSTR,HICON)=NULL;
+            if(language_unicode()) about_w=(int (WINAPI *)(HWND,LPCWSTR,LPCWSTR,HICON))
+                GetProcAddress(GetModuleHandleA("SHELL32.DLL"),"ShellAboutW");
+            if(about_w) about_w(w,trw(T_TITLE),trw(T_ABOUTTEXT),LoadIconA(NULL,IDI_APPLICATION));
+            else ShellAboutA(w,tr(T_TITLE),tr(T_ABOUTTEXT),LoadIconA(NULL,IDI_APPLICATION));
+            break;
+        }
         }
         return 0;
-    case WM_DESTROY: KillTimer(w, 1); PostQuitMessage(0); return 0;
+    case WM_DESTROY: KillTimer(w, 1); tm_system_close(&system_info); PostQuitMessage(0); return 0;
     }
-    return DefWindowProcA(w, msg, wp, lp);
+    return main_default(w, msg, wp, lp);
 }
 void WINAPI WinMainCRTStartup(void)
 {
@@ -399,16 +453,38 @@ void WINAPI WinMainCRTStartup(void)
     HWND w;
     BOOL result;
     instance = GetModuleHandleA(NULL);
+    {
+        char language[8];
+        GetPrivateProfileStringA("Interface","Language",GetACP()==1251?"ru":"en",language,sizeof(language),".\\taskmgr95.ini");
+        language_init(language[0]=='r');
+    }
     InitCommonControls();
     ZeroMemory(&wc, sizeof(wc));
     wc.hInstance = instance; wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
     wc.hIcon = LoadIconA(NULL, IDI_APPLICATION);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpfnWndProc = window_proc; wc.lpszClassName = APP_CLASS;
+    if(language_unicode()) {
+        WNDCLASSW wide;
+        ATOM (WINAPI *register_w)(const WNDCLASSW *);
+        memcpy(&wide,&wc,sizeof(wide));
+        wide.lpszClassName=L"Taskmgr95Main";
+        register_w=(ATOM (WINAPI *)(const WNDCLASSW *))GetProcAddress(GetModuleHandleA("USER32.DLL"),"RegisterClassW");
+        main_default=(LRESULT (WINAPI *)(HWND,UINT,WPARAM,LPARAM))GetProcAddress(GetModuleHandleA("USER32.DLL"),"DefWindowProcW");
+        if(!register_w || !main_default || !register_w(&wide)) ExitProcess(1);
+    } else if (!RegisterClassA(&wc)) ExitProcess(1);
+    wc.lpfnWndProc = page_proc; wc.lpszClassName = PAGE_CLASS;
     if (!RegisterClassA(&wc)) ExitProcess(1);
-    wc.lpfnWndProc = graph_proc; wc.lpszClassName = GRAPH_CLASS;
-    if (!RegisterClassA(&wc)) ExitProcess(1);
-    w = CreateWindowExA(WS_EX_CONTROLPARENT, APP_CLASS, "Task Manager 95",
+    if (!performance_register(instance)) ExitProcess(1);
+    if(language_unicode()) {
+        HWND (WINAPI *create_w)(DWORD,LPCWSTR,LPCWSTR,DWORD,int,int,int,int,HWND,HMENU,HINSTANCE,LPVOID);
+        create_w=(HWND (WINAPI *)(DWORD,LPCWSTR,LPCWSTR,DWORD,int,int,int,int,HWND,HMENU,HINSTANCE,LPVOID))
+            GetProcAddress(GetModuleHandleA("USER32.DLL"),"CreateWindowExW");
+        if(!create_w) ExitProcess(1);
+        w=create_w(WS_EX_CONTROLPARENT,L"Taskmgr95Main",trw(T_TITLE),
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,
+            620,440,NULL,create_menu(),instance,NULL);
+    } else w = CreateWindowExA(WS_EX_CONTROLPARENT, APP_CLASS, "Task Manager 95",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
         620, 440, NULL, create_menu(), instance, NULL);
     if (!w) ExitProcess(1);

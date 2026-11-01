@@ -9,3 +9,8 @@
 #define ID_NORMAL 207
 #define ID_IDLE 208
 #define ID_HIGH 209
+#define ID_ENGLISH 210
+#define ID_RUSSIAN 211
+#define IDC_RUNPROMPT 212
+#define ID_DRIVER 213
+#define IDR_VXD 214
