@@ -1,0 +1,11 @@
+#define IDD_RUN 101
+#define IDC_COMMAND 102
+#define ID_NEW 201
+#define ID_EXIT 202
+#define ID_REFRESH 203
+#define ID_TOP 204
+#define ID_ABOUT 205
+#define ID_PAUSE 206
+#define ID_NORMAL 207
+#define ID_IDLE 208
+#define ID_HIGH 209
