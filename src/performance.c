@@ -10,6 +10,7 @@ static unsigned int samples;
 static HFONT font;
 static int scroll_x, scroll_y;
 static BOOL sizing;
+static BOOL compact_paint;
 
 static void scroll_layout(HWND w)
 {
@@ -77,7 +78,8 @@ static RECT group(HDC dc, int x, int y, int width, int height, int title)
     FillRect(dc, &caption, GetSysColorBrush(COLOR_BTNFACE));
     caption.left+=4;
     language_draw(dc,&caption,title,DT_LEFT);
-    r.left+=12; r.top=y+23; r.right-=12; r.bottom-=10;
+    r.left+=compact_paint?8:12; r.top=y+(compact_paint?18:23);
+    r.right-=compact_paint?8:12; r.bottom-=compact_paint?6:10;
     return r;
 }
 static void number(HDC dc, RECT r, int title, DWORD value, BOOL valid)
@@ -145,12 +147,15 @@ static void paint(HDC dc, RECT client)
     HGDIOBJ old_font;
     int width=client.right, height=client.bottom;
     BOOL compact=width<480;
-    int top_height=(height-(compact?168:180))/2;
+    int top_height=(height-(compact?132:180))/2;
     int meter_width=compact?88:128, half=(width-28)/2;
-    int row_height=compact?14:16, totals_height=compact?70:76;
-    int paging_y, paging_height=compact?60:66;
+    int row_height=compact?13:16, totals_height=compact?60:76;
+    int paging_y, paging_height=compact?48:66;
+    int totals_y;
     if(top_height<60) top_height=60;
-    paging_y=2*top_height+(compact?98:104);
+    totals_y=2*top_height+(compact?16:20);
+    paging_y=2*top_height+(compact?80:104);
+    compact_paint=compact;
     FillRect(dc,&client,GetSysColorBrush(COLOR_BTNFACE));
     old_font=SelectObject(dc,font);
     SetBkMode(dc,TRANSPARENT); SetTextColor(dc,GetSysColor(COLOR_BTNTEXT));
@@ -162,12 +167,12 @@ static void paint(HDC dc, RECT client)
     plot(dc,r,memory_history,TRUE,TRUE,data.memory.dwMemoryLoad);
     r=group(dc,meter_width+16,top_height+12,width-meter_width-24,top_height,compact?T_MEMHISTORY_SHORT:T_MEMHISTORY);
     plot(dc,r,memory_history,FALSE,TRUE,data.memory.dwMemoryLoad);
-    r=group(dc,8,2*top_height+20,half,totals_height,T_TOTALS);
+    r=group(dc,8,totals_y,half,totals_height,T_TOTALS);
     line=r; line.bottom=line.top+row_height;
     number(dc,line,T_PROCESSES,data.processes,data.processes_valid); line.top+=row_height;line.bottom+=row_height;
     number(dc,line,T_THREADS,data.threads,data.processes_valid); line.top+=row_height;line.bottom+=row_height;
     number(dc,line,compact?T_UPTIME_SHORT:T_UPTIME,data.vxd.uptime_ms/1000,data.vxd_valid);
-    r=group(dc,half+20,2*top_height+20,half,totals_height,compact?T_PHYSICAL_SHORT:T_PHYSICAL);
+    r=group(dc,half+20,totals_y,half,totals_height,compact?T_PHYSICAL_SHORT:T_PHYSICAL);
     line=r;line.bottom=line.top+row_height;
     number(dc,line,T_TOTAL,data.memory.dwTotalPhys/1024,TRUE);line.top+=row_height;line.bottom+=row_height;
     number(dc,line,T_AVAILABLE,data.memory.dwAvailPhys/1024,TRUE);line.top+=row_height;line.bottom+=row_height;

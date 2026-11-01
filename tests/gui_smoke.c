@@ -4,6 +4,7 @@
 #include <commctrl.h>
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 #include "resource.h"
 static HWND target,performance;
 static DWORD expected_pid;
@@ -81,6 +82,28 @@ static DWORD black_samples(HWND w)
     ReleaseDC(w,dc);
     return black;
 }
+/* Measure the two actual history plots at the right edge of the panel.
+   This catches regressions where the graphs become thin strips even though
+   the overall panel remains visible. Tiny text strokes are ignored. */
+static int history_plot_height(HWND w)
+{
+    HDC dc;
+    RECT r;
+    COLORREF pixel;
+    int y,run=0,bands=0,shortest=10000;
+    RedrawWindow(w,NULL,NULL,RDW_INVALIDATE | RDW_UPDATENOW);Sleep(50);
+    dc=GetDC(w);GetClientRect(w,&r);
+    for(y=0;y<=r.bottom;++y) {
+        pixel=y<r.bottom?GetPixel(dc,r.right-30,y):CLR_INVALID;
+        if(pixel==RGB(0,0,0) || pixel==RGB(0,80,40) || pixel==RGB(0,255,0)) ++run;
+        else {
+            if(run>=20) { ++bands;if(run<shortest) shortest=run; }
+            run=0;
+        }
+    }
+    ReleaseDC(w,dc);
+    return bands>=2?shortest:0;
+}
 int main(int argc,char **argv)
 {
     STARTUPINFOA start={0};
@@ -88,7 +111,7 @@ int main(int argc,char **argv)
     HWND tab,dialog;
     RECT bounds;
     WCHAR title[100];
-    int i,page;
+    int i,page,graph_height;
     char command[1024], hold[8];
     DWORD exit_code;
     if(argc!=2) { fprintf(stderr,"usage: gui_smoke.exe path-to-taskmgr95.exe\n");return 2; }
@@ -99,6 +122,8 @@ int main(int argc,char **argv)
     for(i=0;i<200 && !target;++i) { EnumWindows(find_target,0);Sleep(30); }
     verify(target!=NULL,"application starts");
     if(!target) return 1;
+    GetWindowTextW(target,title,100);
+    verify(wcsstr(title,L"alpha 5")!=NULL,"alpha 5 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);
@@ -126,6 +151,9 @@ int main(int argc,char **argv)
     GetClientRect(performance,&bounds);
     verify(bounds.right>=320 && bounds.bottom>=300,"all compact panels fit the viewport");
     verify(black_samples(performance)>50,"compact graphs are actually painted");
+    graph_height=history_plot_height(performance);
+    printf("Minimum history plot height: %d pixels\n",graph_height);
+    verify(graph_height>=52,"both history plots retain useful height at 400x450");
     MoveWindow(target,8,8,780,580,TRUE);
     verify((GetWindowLongA(performance,GWL_STYLE)&WS_HSCROLL)==0,"horizontal scrollbar hides after expansion");
     verify((GetWindowLongA(performance,GWL_STYLE)&WS_VSCROLL)==0,"vertical scrollbar hides after expansion");

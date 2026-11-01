@@ -1,8 +1,9 @@
 #include "i18n.h"
+#include "version.h"
 static BOOL ru;
 static char cache[T_COUNT][512];
 static const WCHAR *words[T_COUNT][2] = {
-    {L"Task Manager 95", L"Диспетчер задач 95"},
+    {L"Task Manager 95 - " TM95_BUILD_LABEL_W, L"Диспетчер задач 95 - " TM95_BUILD_LABEL_W},
     {L"&File", L"&Файл"},
     {L"&Options", L"&Параметры"},
     {L"&View", L"&Вид"},
