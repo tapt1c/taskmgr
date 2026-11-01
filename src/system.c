@@ -1,4 +1,5 @@
 #include "system.h"
+#include "process_policy.h"
 /* Tool Help is native on Win95. Resolve it to also permit graceful failure
    on systems (e.g. early NT) where these exports do not exist. */
 BOOL tm_system_init(TM_SYSTEM *sys)
@@ -57,4 +58,28 @@ void tm_system_close(TM_SYSTEM *sys)
         }
     }
     driver_close();
+}
+
+/* A fresh snapshot is required: never trust a name cached in a list row.
+   Callers pin the process with an open handle before the final check/action. */
+BOOL tm_process_end_allowed(TM_SYSTEM *sys,DWORD pid)
+{
+    HANDLE snapshot;
+    PROCESSENTRY32 entry;
+    BOOL allowed=FALSE;
+    if(!pid || pid==GetCurrentProcessId()) return FALSE;
+    snapshot=tm_process_snapshot(sys);
+    if(snapshot==INVALID_HANDLE_VALUE) return FALSE;
+    ZeroMemory(&entry,sizeof(entry));entry.dwSize=sizeof(entry);
+    if(sys->first(snapshot,&entry)) {
+        do {
+            if(entry.th32ProcessID==pid) {
+                allowed=!tm_process_name_protected(entry.szExeFile);
+                break;
+            }
+            entry.dwSize=sizeof(entry);
+        } while(sys->next(snapshot,&entry));
+    }
+    CloseHandle(snapshot);
+    return allowed;
 }

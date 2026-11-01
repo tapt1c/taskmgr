@@ -28,11 +28,11 @@ ALLOWED = {
         MoveWindow PostMessageA PostQuitMessage RegisterClassA SendDlgItemMessageA
         SendMessageA SetForegroundWindow SetTimer SetWindowPos SetWindowTextA
         ShowWindow ShowWindowAsync TranslateMessage UpdateWindow wsprintfA
-        DrawTextA DrawEdge GetSysColor GetSysColorBrush MapWindowPoints InflateRect
+        DrawTextA DrawEdge SetScrollInfo GetScrollInfo GetScrollPos GetSysColor GetSysColorBrush MapWindowPoints InflateRect
         GetWindowRect SetMenu DestroyMenu DrawMenuBar GetDlgItem SetDlgItemTextA'''.split(),
     'GDI32.dll': '''CreatePen DeleteObject GetStockObject LineTo MoveToEx SelectObject
         SetBkMode SetTextColor TextOutA BitBlt CreateCompatibleDC
-        CreateCompatibleBitmap DeleteDC CreateSolidBrush'''.split(),
+        CreateCompatibleBitmap DeleteDC CreateSolidBrush SetViewportOrgEx'''.split(),
     'COMCTL32.DLL': ['InitCommonControls'],
     'SHELL32.dll': ['ShellAboutA'],
     'ADVAPI32.dll': ['RegOpenKeyExA', 'RegQueryValueExA', 'RegCloseKey'],

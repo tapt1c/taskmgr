@@ -2,10 +2,63 @@
 #include "performance.h"
 #include "i18n.h"
 #define HISTORY 120
+#define MIN_CONTENT_WIDTH 520
+#define MIN_CONTENT_HEIGHT 300
 static TM_SYSTEM data;
 static DWORD memory_history[HISTORY], cpu_history[HISTORY];
 static unsigned int samples;
 static HFONT font;
+static int scroll_x, scroll_y;
+static BOOL sizing;
+
+static void scroll_layout(HWND w)
+{
+    RECT r;
+    SCROLLINFO info;
+    int pass;
+    if(sizing) return;
+    sizing=TRUE;
+    /* Showing one scrollbar can reduce space enough to require the other. */
+    for(pass=0;pass<2;++pass) {
+        GetClientRect(w,&r);
+        ZeroMemory(&info,sizeof(info));info.cbSize=sizeof(info);
+        info.fMask=SIF_RANGE | SIF_PAGE | SIF_POS;
+        info.nMax=MIN_CONTENT_WIDTH-1;info.nPage=r.right;info.nPos=scroll_x;
+        SetScrollInfo(w,SB_HORZ,&info,TRUE);
+        scroll_x=GetScrollPos(w,SB_HORZ);
+        GetClientRect(w,&r);
+        info.nMax=MIN_CONTENT_HEIGHT-1;info.nPage=r.bottom;info.nPos=scroll_y;
+        SetScrollInfo(w,SB_VERT,&info,TRUE);
+        scroll_y=GetScrollPos(w,SB_VERT);
+    }
+    sizing=FALSE;
+    InvalidateRect(w,NULL,FALSE);
+}
+
+static void scroll_content(HWND w,int bar,WPARAM command)
+{
+    SCROLLINFO info;
+    int position;
+    ZeroMemory(&info,sizeof(info));info.cbSize=sizeof(info);
+    info.fMask=SIF_ALL;GetScrollInfo(w,bar,&info);
+    position=info.nPos;
+    switch(LOWORD(command)) {
+    case SB_LINEUP: position-=16;break;
+    case SB_LINEDOWN: position+=16;break;
+    case SB_PAGEUP: position-=(int)info.nPage;break;
+    case SB_PAGEDOWN: position+=(int)info.nPage;break;
+    case SB_THUMBPOSITION:
+    case SB_THUMBTRACK: position=info.nTrackPos;break;
+    case SB_TOP: position=info.nMin;break;
+    case SB_BOTTOM: position=info.nMax;break;
+    default: return;
+    }
+    info.fMask=SIF_POS;info.nPos=position;
+    SetScrollInfo(w,bar,&info,TRUE);
+    if(bar==SB_HORZ) scroll_x=GetScrollPos(w,bar);
+    else scroll_y=GetScrollPos(w,bar);
+    InvalidateRect(w,NULL,FALSE);
+}
 
 static void label(HDC dc, RECT r, const char *text, UINT flags)
 {
@@ -20,6 +73,7 @@ static RECT group(HDC dc, int x, int y, int width, int height, int title)
     caption.left=0;caption.top=0;caption.right=0;caption.bottom=0;
     language_draw(dc,&caption,title,DT_CALCRECT);
     caption.right=caption.right+8+x+8;caption.left=x+8;caption.top=y;caption.bottom=y+16;
+    if(caption.right>x+width-8) caption.right=x+width-8;
     FillRect(dc, &caption, GetSysColorBrush(COLOR_BTNFACE));
     caption.left+=4;
     language_draw(dc,&caption,title,DT_LEFT);
@@ -120,22 +174,36 @@ static void paint(HDC dc, RECT client)
 }
 static LRESULT CALLBACK performance_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if(msg==WM_SIZE) { scroll_layout(w);return 0; }
+    if(msg==WM_HSCROLL || msg==WM_VSCROLL) {
+        scroll_content(w,msg==WM_HSCROLL?SB_HORZ:SB_VERT,wp);return 0;
+    }
     if(msg==WM_ERASEBKGND) return 1;
     if(msg==WM_PAINT) {
         PAINTSTRUCT ps;
-        RECT r;
+        RECT r,canvas;
+        POINT origin;
         HDC dc=BeginPaint(w,&ps), buffer;
         HBITMAP bitmap;
         HGDIOBJ old;
         GetClientRect(w,&r);
+        canvas=r;
+        if(canvas.right<MIN_CONTENT_WIDTH) canvas.right=MIN_CONTENT_WIDTH;
+        if(canvas.bottom<MIN_CONTENT_HEIGHT) canvas.bottom=MIN_CONTENT_HEIGHT;
         buffer=CreateCompatibleDC(dc);
         bitmap=CreateCompatibleBitmap(dc,r.right>0?r.right:1,r.bottom>0?r.bottom:1);
         if(buffer && bitmap) {
             old=SelectObject(buffer,bitmap);
-            paint(buffer,r);
+            SetViewportOrgEx(buffer,-scroll_x,-scroll_y,NULL);
+            paint(buffer,canvas);
+            SetViewportOrgEx(buffer,0,0,NULL);
             BitBlt(dc,0,0,r.right,r.bottom,buffer,0,0,SRCCOPY);
             SelectObject(buffer,old);
-        } else paint(dc,r);
+        } else {
+            SetViewportOrgEx(dc,-scroll_x,-scroll_y,&origin);
+            paint(dc,canvas);
+            SetViewportOrgEx(dc,origin.x,origin.y,NULL);
+        }
         if(bitmap) DeleteObject(bitmap);
         if(buffer) DeleteDC(buffer);
         EndPaint(w,&ps); return 0;

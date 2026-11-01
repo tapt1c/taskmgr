@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "resource.h"
-static HWND target;
+static HWND target,performance;
 static DWORD expected_pid;
 static BOOL CALLBACK find_target(HWND w,LPARAM unused)
 {
@@ -20,6 +20,8 @@ static BOOL CALLBACK count_visible(HWND w,LPARAM unused)
     char cls[80];
     RECT r,parent;
     (void)unused;
+    GetClassNameA(w,cls,sizeof(cls));
+    if(!strcmp(cls,"Taskmgr95Performance")) performance=w;
     if(!IsWindowVisible(w)) return TRUE;
     GetClassNameA(w,cls,sizeof(cls));
     if(!strcmp(cls,"SysListView32")) ++lists;
@@ -65,11 +67,26 @@ static HWND wait_dialog(void)
     for(i=0;i<100 && !dialog;++i) { EnumWindows(find_dialog,(LPARAM)&dialog);Sleep(30); }
     return dialog;
 }
+static DWORD paint_hash(HWND w)
+{
+    HDC dc;
+    RECT r;
+    DWORD hash=0;
+    int x,y;
+    RedrawWindow(w,NULL,NULL,RDW_INVALIDATE | RDW_UPDATENOW);
+    Sleep(50);
+    dc=GetDC(w);GetClientRect(w,&r);
+    for(y=0;y<r.bottom;y+=7) for(x=0;x<r.right;x+=7)
+        hash=(hash*33)^GetPixel(dc,x,y);
+    ReleaseDC(w,dc);
+    return hash;
+}
 int main(int argc,char **argv)
 {
     STARTUPINFOA start={0};
     PROCESS_INFORMATION process;
     HWND tab,dialog;
+    DWORD before;
     WCHAR title[100];
     int i,page;
     char command[1024], hold[8];
@@ -92,14 +109,27 @@ int main(int argc,char **argv)
     SendMessageA(target,WM_COMMAND,ID_PAUSE,0);
     for(i=0;i<60;++i) {
         page=i%3;change_page(tab,page);
-        MoveWindow(target,8,8,i%2?620:780,i%2?440:580,TRUE);
+        MoveWindow(target,8,8,i%2?420:780,i%2?330:580,TRUE);
         SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
         check_page(page);
     }
     SendMessageA(target,WM_COMMAND,ID_RUSSIAN,0);
     GetWindowTextW(target,title,100);
     verify(title[0]==0x414 && title[1]==0x438,"Russian Unicode title");
-    change_page(tab,2);check_page(2);
+    MoveWindow(target,8,8,420,330,TRUE);
+    for(page=0;page<3;++page) { change_page(tab,page);check_page(page); }
+    verify(performance!=NULL,"performance control found");
+    verify((GetWindowLongA(performance,GWL_STYLE)&WS_HSCROLL)!=0,"small window has horizontal scrolling");
+    verify((GetWindowLongA(performance,GWL_STYLE)&WS_VSCROLL)!=0,"small window has vertical scrolling");
+    before=paint_hash(performance);
+    SendMessageA(performance,WM_HSCROLL,SB_BOTTOM,0);
+    verify(paint_hash(performance)!=before,"horizontal scrolling changes the rendered viewport");
+    before=paint_hash(performance);
+    SendMessageA(performance,WM_VSCROLL,SB_BOTTOM,0);
+    verify(paint_hash(performance)!=before,"vertical scrolling changes the rendered viewport");
+    MoveWindow(target,8,8,780,580,TRUE);
+    verify((GetWindowLongA(performance,GWL_STYLE)&WS_HSCROLL)==0,"horizontal scrollbar hides after expansion");
+    verify((GetWindowLongA(performance,GWL_STYLE)&WS_VSCROLL)==0,"vertical scrollbar hides after expansion");
     SendMessageA(target,WM_COMMAND,ID_ENGLISH,0);
     GetWindowTextW(target,title,100);
     verify(title[0]=='T' && title[1]=='a',"switch back to English");
@@ -113,7 +143,7 @@ int main(int argc,char **argv)
     Sleep(200);
     /* Stay on Performance for a screenshot; caller closes after capture. */
     SendMessageA(target,WM_COMMAND,ID_RUSSIAN,0);
-    change_page(tab,2);MoveWindow(target,8,8,620,480,TRUE);
+    change_page(tab,2);MoveWindow(target,8,8,420,330,TRUE);
     GetExitCodeProcess(process.hProcess,&exit_code);
     verify(exit_code==STILL_ACTIVE,"application survives UI stress");
     printf("%d checks, %d failures\n",checks,failures);

@@ -30,7 +30,7 @@ static const WCHAR *words[T_COUNT][2] = {
     {L"End Process", L"Завершить процесс"},
     {L"Switch To", L"Переключиться"},
     {L"%s failed (Windows error %lu).", L"Ошибка %s (код Windows: %lu)."},
-    {L"This process cannot be ended here.", L"Этот процесс нельзя завершить здесь."},
+    {L"Termination is blocked: a critical system component, this task manager, or an unverified process.", L"Завершение запрещено: критичный компонент системы, сам диспетчер или процесс, который не удалось проверить."},
     {L"End the selected process? Unsaved data will be lost.", L"Завершить выбранный процесс? Несохранённые данные будут потеряны."},
     {L"High priority can make Windows unresponsive. Continue?", L"Высокий приоритет может привести к зависанию Windows. Продолжить?"},
     {L"Early alpha. Native Win32 task manager.\nCPU metrics depend on the available provider.\nExperimental driver support; not validated on Windows 95.", L"Ранняя альфа. Диспетчер задач на Win32.\nМетрики ЦП зависят от доступного источника.\nДрайвер экспериментальный; Windows 95 ещё не проверена."},

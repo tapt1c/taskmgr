@@ -97,11 +97,17 @@ static void restore_selection(HWND list, LPARAM key, BOOL valid)
 static void update_actions(void)
 {
     LPARAM key;
-    BOOL has;
+    BOOL has, can_end=FALSE;
+    DWORD pid=0;
     if (creating || refreshing) return;
     has = page < 2 && selected(page == 0 ? apps : procs, &key);
-    EnableWindow(end_button, has && page == 0);
-    EnableWindow(process_end_button, has && page == 1);
+    if(has) {
+        if(page==0) GetWindowThreadProcessId((HWND)key,&pid);
+        else pid=(DWORD)key;
+        can_end=tm_process_end_allowed(&system_info,pid);
+    }
+    EnableWindow(end_button, has && can_end && page == 0);
+    EnableWindow(process_end_button, has && can_end && page == 1);
     EnableWindow(switch_button, has && page == 0);
 }
 static BOOL CALLBACK enumerate_window(HWND w, LPARAM unused)
@@ -185,7 +191,7 @@ static LRESULT CALLBACK page_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 static void layout(void)
 {
     RECT r, content, sr;
-    int width, height, parts[3], i, cw, ch, button_width, gap=6;
+    int width, height, parts[3], i, cw, ch, button_width, process_width, gap=6;
     if (creating || !tabs) return;
     GetClientRect(main_window, &r);
     width=r.right; height=r.bottom;
@@ -205,14 +211,16 @@ static void layout(void)
         MoveWindow(pages[i],content.left,content.top,cw,ch,TRUE);
     }
     SetWindowPos(pages[page],HWND_TOP,0,0,0,0,SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    button_width=language_russian()?150:116;
+    process_width=language_russian()?150:116;
+    button_width=process_width;
+    if(button_width>(cw-2*gap)/3) button_width=(cw-2*gap)/3;
     MoveWindow(apps,0,0,cw,ch-34,TRUE);
     MoveWindow(procs,0,0,cw,ch-34,TRUE);
     MoveWindow(graph,0,0,cw,ch,TRUE);
     MoveWindow(end_button,cw-3*button_width-2*gap,ch-25,button_width,24,TRUE);
     MoveWindow(switch_button,cw-2*button_width-gap,ch-25,button_width,24,TRUE);
     MoveWindow(new_button,cw-button_width,ch-25,button_width,24,TRUE);
-    MoveWindow(process_end_button,cw-button_width,ch-25,button_width,24,TRUE);
+    MoveWindow(process_end_button,cw-process_width,ch-25,process_width,24,TRUE);
     InvalidateRect(main_window,NULL,TRUE);
     update_actions();
 }
@@ -251,6 +259,10 @@ static void end_selected(void)
     DWORD pid;
     if (page == 0 && selected(apps, &key)) {
         if (!IsWindow((HWND)key)) return;
+        GetWindowThreadProcessId((HWND)key,&pid);
+        if(!tm_process_end_allowed(&system_info,pid)) {
+            language_message(main_window,T_PROTECTED,T_TITLE,MB_OK);return;
+        }
         /* Closing is asynchronous: a hung application cannot block our UI. */
         if (!PostMessageA((HWND)key, WM_CLOSE, 0, 0)) error_message(main_window, "Close window");
     } else if (page == 1 && selected(procs, &key)) {
@@ -260,9 +272,15 @@ static void end_selected(void)
         }
         process = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
         if (!process) { error_message(main_window, "OpenProcess"); return; }
+        if(!tm_process_end_allowed(&system_info,pid)) {
+            CloseHandle(process);
+            language_message(main_window,T_PROTECTED,T_TITLE,MB_OK);return;
+        }
         if (language_message(main_window,T_CONFIRMEND,
             T_ENDPROCESS, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
-            if (!TerminateProcess(process, 1)) error_message(main_window, "TerminateProcess");
+            if(!tm_process_end_allowed(&system_info,pid))
+                language_message(main_window,T_PROTECTED,T_TITLE,MB_OK);
+            else if (!TerminateProcess(process, 1)) error_message(main_window, "TerminateProcess");
         }
         CloseHandle(process);
     }
@@ -370,7 +388,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         switch_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_SWITCH);
         new_button=control(pages[0],"BUTTON","",WS_TABSTOP,ID_NEW);
         process_end_button=control(pages[1],"BUTTON","",WS_TABSTOP,ID_END);
-        graph=control(pages[2],TM95_PERF_CLASS,"",0,0);
+        graph=control(pages[2],TM95_PERF_CLASS,"",WS_HSCROLL | WS_VSCROLL,0);
         if(!tabs || !apps || !procs || !status_bar || !end_button || !switch_button || !new_button || !process_end_button || !graph || !pages[0] || !pages[1] || !pages[2]) return -1;
         ListView_SetBkColor(apps,GetSysColor(COLOR_WINDOW));
         ListView_SetTextBkColor(apps,GetSysColor(COLOR_WINDOW));
@@ -388,8 +406,8 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_GETMINMAXINFO:
-        ((MINMAXINFO *)lp)->ptMinTrackSize.x = 560;
-        ((MINMAXINFO *)lp)->ptMinTrackSize.y = 440;
+        ((MINMAXINFO *)lp)->ptMinTrackSize.x = 420;
+        ((MINMAXINFO *)lp)->ptMinTrackSize.y = 330;
         return 0;
     case WM_SIZE: layout(); return 0;
     case WM_NOTIFY:
