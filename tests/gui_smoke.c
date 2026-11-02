@@ -249,6 +249,49 @@ static HWND process_list(HWND tab)
         if(IsWindowVisible(page) && GetDlgItem(page,303)) return GetDlgItem(page,303);
     return NULL;
 }
+static BOOL process_cell(HWND list,int row,int column,WCHAR *text)
+{
+    LVITEMW item={0};
+    item.iSubItem=column;item.cchTextMax=256;item.pszText=(WCHAR *)((BYTE *)remote_buffer+512);
+    text[0]=0;
+    if(row<0 || !WriteProcessMemory(app_process,remote_buffer,&item,sizeof(item),NULL)) return FALSE;
+    if(!SendMessageA(list,LVM_GETITEMTEXTW,row,(LPARAM)remote_buffer)) return FALSE;
+    if(!ReadProcessMemory(app_process,item.pszText,text,256*sizeof(*text),NULL)) return FALSE;
+    text[255]=0;return TRUE;
+}
+static void memory_workflow(HWND list,int own_row)
+{
+    WCHAR text[256];
+    SIZE_T before=0,after=0,previous=(SIZE_T)-1,value;
+    BYTE *allocation;
+    int i;
+    BOOL sorted=TRUE,unknown=FALSE;
+    if(process_cell(list,own_row,6,text)) before=(SIZE_T)wcstoull(text,NULL,10);
+    verify(before>0,"RAM column contains a real working set reading");
+    allocation=VirtualAlloc(NULL,16*1024*1024,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
+    if(allocation) for(i=0;i<16*1024*1024;i+=4096) allocation[i]=1;
+    SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
+    /* At this point the table is still sorted by image name. Find our PID again. */
+    {
+        LVFINDINFOA find={0};
+        find.flags=LVFI_PARAM;find.lParam=GetCurrentProcessId();
+        WriteProcessMemory(app_process,remote_buffer,&find,sizeof(find),NULL);
+        own_row=(int)SendMessageA(list,LVM_FINDITEMA,(WPARAM)-1,(LPARAM)remote_buffer);
+    }
+    if(process_cell(list,own_row,6,text)) after=(SIZE_T)wcstoull(text,NULL,10);
+    verify(allocation && after>=before+8192,"RAM reading increases after touching allocated pages");
+    SendMessageA(target,WM_COMMAND,ID_PROC_SORT_MEMORY,0);
+    SendMessageA(target,WM_COMMAND,ID_PROC_SORT_DESCENDING,0);
+    for(i=0;i<ListView_GetItemCount(list);++i) {
+        if(!process_cell(list,i,6,text)) { sorted=FALSE;break; }
+        if(!wcscmp(text,L"N/A")) { unknown=TRUE;continue; }
+        value=(SIZE_T)wcstoull(text,NULL,10);
+        if(unknown || value>previous) sorted=FALSE;
+        previous=value;
+    }
+    verify(sorted,"RAM sorts numerically with unavailable readings last");
+    if(allocation) VirtualFree(allocation,0,MEM_RELEASE);
+}
 static void processes_workflow(HWND tab,HANDLE process)
 {
     HWND list=process_list(tab),dialog,header;
@@ -272,6 +315,9 @@ static void processes_workflow(HWND tab,HANDLE process)
     ReadProcessMemory(process,item.pszText,text,sizeof(text),NULL);text[255]=0;
     base=wcsrchr(text,L'\\');base=base?base+1:text;
     verify(index>=0 && GetUserNameW(user,&length) && !_wcsicmp(base,user),"own process shows its token user name");
+    verify(Header_GetItemCount((HWND)SendMessageA(list,LVM_GETHEADER,0,0))==7 &&
+        ListView_GetColumnWidth(list,2)==83,"alpha 7 preferences survive adding the RAM column");
+    memory_workflow(list,index);
     PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
     dialog=wait_dialog();verify(dialog!=NULL,"process column editor opens");
     if(dialog) {
@@ -280,10 +326,12 @@ static void processes_workflow(HWND tab,HANDLE process)
         select_column(dialog,5);
         CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,BST_UNCHECKED);
         SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_VISIBLE,0);
+        select_column(dialog,6);SetDlgItemTextA(dialog,IDC_COLUMN_WIDTH,"99");
+        SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_UP,0);
         SendMessageA(dialog,WM_COMMAND,IDOK,0);
     }
     header=(HWND)SendMessageA(list,LVM_GETHEADER,0,0);
-    verify(Header_GetItemCount(header)==5 && ListView_GetColumnWidth(list,2)==133,
+    verify(Header_GetItemCount(header)==6 && ListView_GetColumnWidth(list,2)==133 && ListView_GetColumnWidth(list,5)==99,
         "process columns can be hidden, reordered and resized");
     ListView_SetColumnWidth(list,0,171);
     SendMessageA(target,WM_COMMAND,ID_PROC_SORT_PID,0);
@@ -325,7 +373,7 @@ int main(int argc,char **argv)
     verify(target!=NULL,"application starts");
     if(!target) return 1;
     GetWindowTextW(target,title,100);
-    verify(wcsstr(title,L"alpha 7")!=NULL,"alpha 7 build is running");
+    verify(wcsstr(title,L"alpha 8")!=NULL,"alpha 8 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);
@@ -402,8 +450,9 @@ int main(int argc,char **argv)
         tab=GetDlgItem(target,301);
         {
             HWND list=process_list(tab);
-            verify(list && Header_GetItemCount((HWND)SendMessageA(list,LVM_GETHEADER,0,0))==5 &&
+            verify(list && Header_GetItemCount((HWND)SendMessageA(list,LVM_GETHEADER,0,0))==6 &&
                 ListView_GetColumnWidth(list,0)==171 && ListView_GetColumnWidth(list,2)==133 &&
+                ListView_GetColumnWidth(list,5)==99 &&
                 (GetMenuState(GetSubMenu(GetMenu(target),2),ID_PROC_SORT_PID,MF_BYCOMMAND)&MF_CHECKED),
                 "process preferences persist independently after restart");
             change_page(tab,0);
@@ -429,8 +478,8 @@ int main(int argc,char **argv)
         PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
         dialog=wait_dialog();
         if(dialog) {
-            for(i=3;i<6;++i) {
-                select_column(dialog,i);CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,BST_UNCHECKED);
+            for(i=3;i<7;++i) {
+                select_column(dialog,i);CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,i==5?BST_CHECKED:BST_UNCHECKED);
                 SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_VISIBLE,0);
             }
             SendMessageA(dialog,WM_COMMAND,IDOK,0);

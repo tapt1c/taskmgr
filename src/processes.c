@@ -1,23 +1,27 @@
 #include "processes.h"
 #include "columns.h"
 #include "owner.h"
+#include "process_memory.h"
 #include "i18n.h"
 #include "resource.h"
-#define COLUMN_COUNT 6
+#define COLUMN_COUNT 7
 #define NAME 0
 #define PID 1
 #define THREADS 2
 #define PRIORITY 3
 #define PATH 4
 #define USER 5
+#define MEMORY 6
 #define INI_SECTION "Processes"
 typedef struct {
     DWORD pid,threads;
     LONG priority;
+    SIZE_T memory_kb;
+    BOOL memory_valid;
     int base;
     WCHAR path[MAX_PATH],user[256];
 } PROCESS_ROW;
-static const int titles[COLUMN_COUNT]={T_IMAGE,T_APP_PID,T_THREADS,T_BASEPRI,T_PATH,T_PROC_USER};
+static const int titles[COLUMN_COUNT]={T_IMAGE,T_APP_PID,T_THREADS,T_BASEPRI,T_PATH,T_PROC_USER,T_PROC_MEMORY};
 static TM_COLUMNS columns;
 static PROCESS_ROW *rows;
 static int row_count,sort_column,descending;
@@ -43,25 +47,30 @@ static void save_settings(void)
 }
 static void load_settings(void)
 {
-    static const int order[COLUMN_COUNT]={NAME,USER,PID,THREADS,PRIORITY,PATH};
-    static const int width[COLUMN_COUNT]={150,85,70,115,280,140};
+    static const int order[COLUMN_COUNT]={NAME,USER,PID,MEMORY,THREADS,PRIORITY,PATH};
+    static const int width[COLUMN_COUNT]={150,85,70,115,280,140,100};
     char key[32];
-    int i,value,mask=0;
+    int i,value,mask=1,count=1;
     columns.count=COLUMN_COUNT;columns.titles=titles;
     sort_column=(int)GetPrivateProfileIntA(INI_SECTION,"Sort",NAME,ini_path);
     if(sort_column<0 || sort_column>=COLUMN_COUNT) sort_column=NAME;
     descending=GetPrivateProfileIntA(INI_SECTION,"Descending",0,ini_path)!=0;
     columns.autofit=GetPrivateProfileIntA(INI_SECTION,"AutoNameWidth",1,ini_path)!=0;
+    columns.order[0]=NAME;
     for(i=0;i<COLUMN_COUNT;++i) {
-        wsprintfA(key,"Order%d",i);value=(int)GetPrivateProfileIntA(INI_SECTION,key,order[i],ini_path);
-        if(value<0 || value>=COLUMN_COUNT || (mask&(1<<value))) value=-1;
-        columns.order[i]=value;if(value>=0) mask|=1<<value;
+        wsprintfA(key,"Order%d",i);value=(int)GetPrivateProfileIntA(INI_SECTION,key,-1,ini_path);
+        if(value>NAME && value<COLUMN_COUNT && !(mask&(1<<value))) {
+            columns.order[count++]=value;mask|=1<<value;
+        }
         wsprintfA(key,"Visible%d",i);columns.visible[i]=GetPrivateProfileIntA(INI_SECTION,key,1,ini_path)!=0;
         wsprintfA(key,"Width%d",i);value=(int)GetPrivateProfileIntA(INI_SECTION,key,width[i],ini_path);
         columns.width[i]=value>=32 && value<=1200?value:width[i];
     }
-    if(mask!=63 || columns.order[0]!=NAME)
-        for(i=0;i<COLUMN_COUNT;++i) columns.order[i]=order[i];
+    /* Preserve the saved relative order when upgrading from fewer columns.
+       Append missing/new columns; malformed or duplicate IDs cannot escape bounds. */
+    for(i=0;i<COLUMN_COUNT;++i) if(!(mask&(1<<order[i]))) {
+        columns.order[count++]=order[i];mask|=1<<order[i];
+    }
     columns.visible[NAME]=TRUE;
 }
 static int compare_w(const WCHAR *a,const WCHAR *b)
@@ -83,6 +92,15 @@ static const WCHAR *field(PROCESS_ROW *row,int id,WCHAR *scratch)
     if(id==NAME) return row->path+row->base;
     if(id==PATH) return row->path;
     if(id==USER) return row->user[0]?row->user:trw(T_NA);
+    if(id==MEMORY) {
+        SIZE_T number=row->memory_kb;
+        WCHAR reversed[32];
+        int count=0,i;
+        if(!row->memory_valid) return trw(T_NA);
+        do { reversed[count++]=(WCHAR)('0'+number%10);number/=10; } while(number);
+        for(i=0;i<count;++i) scratch[i]=reversed[count-i-1];
+        scratch[count]=0;return scratch;
+    }
     if(id==PID) wsprintfA(value,"%lu",row->pid);
     else if(id==THREADS) wsprintfA(value,"%lu",row->threads);
     else wsprintfA(value,"%ld",row->priority);
@@ -101,7 +119,10 @@ static int CALLBACK compare_items(LPARAM left,LPARAM right,LPARAM unused)
     int result;
     (void)unused;
     if(!a || !b) return 0;
-    if(sort_column==PID) result=a->pid<b->pid?-1:a->pid>b->pid?1:0;
+    /* Unknown readings sort last in either direction, separately from true zero. */
+    if(sort_column==MEMORY && a->memory_valid!=b->memory_valid) return a->memory_valid?-1:1;
+    if(sort_column==MEMORY) result=a->memory_kb<b->memory_kb?-1:a->memory_kb>b->memory_kb?1:0;
+    else if(sort_column==PID) result=a->pid<b->pid?-1:a->pid>b->pid?1:0;
     else if(sort_column==THREADS) result=a->threads<b->threads?-1:a->threads>b->threads?1:0;
     else if(sort_column==PRIORITY) result=a->priority<b->priority?-1:a->priority>b->priority?1:0;
     else result=compare_w(field(a,sort_column,sa),field(b,sort_column,sb));
@@ -213,6 +234,8 @@ void processes_refresh(TM_SYSTEM *sys)
         for(i=0;row->path[i];++i) if(row->path[i]=='\\' || row->path[i]=='/') row->base=i+1;
         /* Resolve only when displayed or used for sorting. NT tokens are opened fresh. */
         if(columns.visible[USER] || sort_column==USER) owner_name(row->pid,row->user,256);
+        if(columns.visible[MEMORY] || sort_column==MEMORY)
+            row->memory_valid=process_memory_kb(row->pid,&row->memory_kb);
         threads+=row->threads;++count;entry.dwSize=sizeof(entry);
         ok=sys->next(snapshot,&entry);
     }
@@ -296,11 +319,11 @@ BOOL processes_init(HWND list,HWND owner,HINSTANCE instance,const char *ini)
     list_window=list;owner_window=owner;module_instance=instance;
     length=GetFullPathNameA(ini,MAX_PATH,ini_path,NULL);
     if(!length || length>=MAX_PATH) return FALSE;
-    owner_init();load_settings();initialized=TRUE;rebuild_columns();return TRUE;
+    owner_init();process_memory_init();load_settings();initialized=TRUE;rebuild_columns();return TRUE;
 }
 void processes_close(void)
 {
     if(initialized) { capture_widths();save_settings(); }
     if(rows) HeapFree(GetProcessHeap(),0,rows);
-    rows=NULL;row_count=0;initialized=FALSE;
+    rows=NULL;row_count=0;initialized=FALSE;process_memory_close();
 }
