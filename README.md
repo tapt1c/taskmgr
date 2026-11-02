@@ -153,3 +153,5 @@ make wine64-smoke WINE=/path/to/wine WINE_CC=x86_64-w64-mingw32-gcc-win32
 остаётся в `build/wine64` и **не предназначена для Windows 95**.
 
 [Результаты и ручная проверка](docs/testing.md) · [VxD: возможности и ограничения](docs/vxd.md).
+
+[Правила работы над проектом](AGENTS.md) · [Задачи и текущий статус](BACKLOG.md).
