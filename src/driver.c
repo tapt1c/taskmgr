@@ -1,5 +1,6 @@
 #include "driver.h"
 #include "resource.h"
+#include "version.h"
 static HANDLE device=INVALID_HANDLE_VALUE;
 static BOOL file_created;
 static char driver_path[MAX_PATH],driver_directory[MAX_PATH];
@@ -58,13 +59,13 @@ static BOOL verify_file(const char *path,const BYTE *expected,DWORD length)
     if(error) { last_error=error;return FALSE; }
     verified_bytes=offset;return TRUE;
 }
-static BOOL open_device(const char *path)
+static BOOL open_device(const char *path,const char *basename)
 {
     char original[MAX_PATH];
     DWORD length,open_error;
     lstrcpyA(attempt_name,"\\\\.\\");lstrcatA(attempt_name,path);
     last_stage="CreateFile VxD (full path)";
-    device=CreateFileA(attempt_name,0,0,NULL,0,FILE_FLAG_DELETE_ON_CLOSE,NULL);
+    device=CreateFileA(attempt_name,0,0,NULL,CREATE_NEW,FILE_FLAG_DELETE_ON_CLOSE,NULL);
     if(device!=INVALID_HANDLE_VALUE) return TRUE;
     absolute_error=GetLastError();
     if(absolute_error!=ERROR_FILE_NOT_FOUND && absolute_error!=ERROR_PATH_NOT_FOUND) {
@@ -79,8 +80,8 @@ static BOOL open_device(const char *path)
     }
     last_stage="set VxD directory";
     if(!SetCurrentDirectoryA(driver_directory)) { last_error=GetLastError();return FALSE; }
-    lstrcpyA(attempt_name,"\\\\.\\TM95STAT.VXD");
-    device=CreateFileA(attempt_name,0,0,NULL,0,FILE_FLAG_DELETE_ON_CLOSE,NULL);
+    lstrcpyA(attempt_name,"\\\\.\\");lstrcatA(attempt_name,basename);
+    device=CreateFileA(attempt_name,0,0,NULL,CREATE_NEW,FILE_FLAG_DELETE_ON_CLOSE,NULL);
     open_error=device==INVALID_HANDLE_VALUE?GetLastError():0;
     relative_error=open_error;
     last_stage="restore original directory";
@@ -89,7 +90,7 @@ static BOOL open_device(const char *path)
     if(open_error) { last_error=open_error;return FALSE; }
     return TRUE;
 }
-static BOOL enable_driver(HINSTANCE instance)
+static BOOL load_resource(HINSTANCE instance,UINT resource_id,const char *basename)
 {
     HRSRC resource;
     HGLOBAL loaded;
@@ -98,13 +99,12 @@ static BOOL enable_driver(HINSTANCE instance)
     char directory[MAX_PATH],temporary[MAX_PATH],short_path[MAX_PATH];
     DWORD short_length;
     HANDLE file;
-    TM95_VXD_SAMPLE sample;
     if(device!=INVALID_HANDLE_VALUE) return TRUE;
     /* Never attempt to load a VxD into NT/Wine. */
     if(!(GetVersion() & 0x80000000UL)) { last_stage="VxD requires Win9x";last_error=ERROR_NOT_SUPPORTED;return FALSE; }
     last_error=0;resource_length=verified_bytes=absolute_error=relative_error=0;
     attempt_name[0]=attempt_file[0]=0;last_stage="resource";
-    resource=FindResourceA(instance,MAKEINTRESOURCEA(IDR_VXD),RT_RCDATA);
+    resource=FindResourceA(instance,MAKEINTRESOURCEA(resource_id),RT_RCDATA);
     if(!resource) { last_error=GetLastError();return FALSE; }
     length=SizeofResource(instance,resource);resource_length=length;
     loaded=LoadResource(instance,resource);
@@ -115,15 +115,14 @@ static BOOL enable_driver(HINSTANCE instance)
     if(!temp_length) { last_error=GetLastError();return FALSE; }
     if(temp_length>MAX_PATH-32) { last_error=ERROR_FILENAME_EXCED_RANGE;return FALSE; }
     if(!GetTempFileNameA(directory,"TM9",0,temporary)) { last_error=GetLastError();return FALSE; }
-    /* Keep the filename equal to the LE module and DDB identity. Isolate it
-       filename in a directory we created rather than randomizing its basename. */
+    /* Keep the filename equal to the module/DDB identity in our own directory. */
     last_stage="create VxD directory";
     if(!DeleteFileA(temporary)) { last_error=GetLastError();return FALSE; }
     if(!CreateDirectoryA(temporary,NULL)) { last_error=GetLastError();return FALSE; }
     lstrcpyA(driver_directory,temporary);
-    lstrcpyA(driver_path,temporary);lstrcatA(driver_path,"\\TM95STAT.VXD");
+    lstrcpyA(driver_path,temporary);lstrcatA(driver_path,"\\");lstrcatA(driver_path,basename);
     lstrcpyA(attempt_file,driver_path);
-    last_stage="extract TM95STAT.VXD";
+    last_stage="extract VxD file";
     file=CreateFileA(driver_path,GENERIC_WRITE,0,NULL,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,NULL);
     if(file==INVALID_HANDLE_VALUE) { last_error=GetLastError();driver_close();return FALSE; }
     file_created=TRUE;
@@ -141,10 +140,9 @@ static BOOL enable_driver(HINSTANCE instance)
         last_error=short_length?ERROR_FILENAME_EXCED_RANGE:GetLastError();driver_close();return FALSE;
     }
     lstrcpyA(attempt_file,short_path);
-    if(!verify_file(short_path,(const BYTE *)bytes,length) || !open_device(short_path)) {
+    if(!verify_file(short_path,(const BYTE *)bytes,length) || !open_device(short_path,basename)) {
         driver_close();return FALSE;
     }
-    if(!driver_sample(&sample)) { driver_close();return FALSE; }
     last_error=0;return TRUE;
 }
 
@@ -161,16 +159,49 @@ BOOL driver_cad(BOOL enable)
     last_error=0;return TRUE;
 }
 
+static void diagnose_loader(HINSTANCE instance,HANDLE log)
+{
+    DWORD original_error=last_error,builtin_error,probe_error,query_error=ERROR_INVALID_HANDLE;
+    DWORD returned=0,written,length;
+    const char *original_stage=last_stage;
+    char report[768];
+    HANDLE builtin;
+    TM95_PROBE_SAMPLE sample;
+    BOOL opened,queried=FALSE;
+    /* Opening an existing OS device tests the namespace without any IOCTL. */
+    builtin=CreateFileA("\\\\.\\VWIN32",0,0,NULL,0,0,NULL);
+    builtin_error=builtin==INVALID_HANDLE_VALUE?GetLastError():0;
+    if(builtin!=INVALID_HANDLE_VALUE) CloseHandle(builtin);
+    opened=load_resource(instance,IDR_VXD_PROBE,"TM95TEST.VXD");
+    probe_error=opened?0:last_error;
+    if(opened) {
+        ZeroMemory(&sample,sizeof(sample));queried=TRUE;
+        if(!DeviceIoControl(device,TM95_IOCTL_QUERY,NULL,0,&sample,sizeof(sample),&returned,NULL)) query_error=GetLastError();
+        else query_error=returned==sizeof(sample) && sample.size==sizeof(sample) && sample.magic==TM95_PROBE_MAGIC?0:ERROR_INVALID_DATA;
+    }
+    length=(DWORD)wsprintfA(report,"VWIN32 open error: %lu\r\nProbe open error: %lu\r\nProbe query attempted: %u\r\nProbe query error: %lu\r\nProbe readback bytes: %lu\r\nProbe device: %s\r\n",builtin_error,probe_error,(UINT)queried,query_error,verified_bytes,attempt_name);
+    WriteFile(log,report,length,&written,NULL);
+    driver_close();
+    /* Probe diagnostics must not replace the original error shown in the UI. */
+    last_error=original_error;last_stage=original_stage;
+}
 BOOL driver_enable(HINSTANCE instance)
 {
-    BOOL result=enable_driver(instance);
+    TM95_VXD_SAMPLE sample;
+    BOOL result=load_resource(instance,IDR_VXD,"TM95STAT.VXD");
+    if(result && !driver_sample(&sample)) { driver_close();result=FALSE; }
     if(!result && (GetVersion()&0x80000000UL)) {
         char report[1024];
         HANDLE file;
         DWORD length,written;
-        length=(DWORD)wsprintfA(report,"Taskmgr95 VxD protocol %lu\r\nGetVersion: %08lX\r\nStage: %s\r\nError: %lu\r\nDevice: %s\r\nFile: %s\r\nEmbedded bytes: %lu\r\nReadback bytes: %lu\r\nFull-path error: %lu\r\nName-only error: %lu\r\n",TM95_PROTOCOL_VERSION,GetVersion(),last_stage,last_error,attempt_name,attempt_file,resource_length,verified_bytes,absolute_error,relative_error);
+        length=(DWORD)wsprintfA(report,"Taskmgr95 " TM95_VERSION_STRING " VxD protocol %lu\r\nGetVersion: %08lX\r\nStage: %s\r\nError: %lu\r\nDevice: %s\r\nFile: %s\r\nEmbedded bytes: %lu\r\nReadback bytes: %lu\r\nFull-path error: %lu\r\nName-only error: %lu\r\n",TM95_PROTOCOL_VERSION,GetVersion(),last_stage,last_error,attempt_name,attempt_file,resource_length,verified_bytes,absolute_error,relative_error);
         file=CreateFileA(".\\taskmgr95-vxd.log",GENERIC_WRITE,FILE_SHARE_READ,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-        if(file!=INVALID_HANDLE_VALUE) { WriteFile(file,report,length,&written,NULL);CloseHandle(file); }
+        if(file!=INVALID_HANDLE_VALUE) {
+            WriteFile(file,report,length,&written,NULL);
+            if((last_error==ERROR_FILE_NOT_FOUND || last_error==ERROR_PATH_NOT_FOUND) &&
+                resource_length && verified_bytes==resource_length) diagnose_loader(instance,file);
+            CloseHandle(file);
+        }
     }
     return result;
 }

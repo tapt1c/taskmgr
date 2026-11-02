@@ -7,23 +7,30 @@ from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_INTR
 from unicorn.x86_const import *
 
 base, stack, request, sentinel = 0x100000, 0x200000, 0x300000, 0x400000
-raw = Path('build/tm95stat.vxd').read_bytes()
 u32 = lambda buf,pos: struct.unpack_from('<I',buf,pos)[0]
-le=u32(raw,0x3c)
-assert raw[le:le+2]==b'LE'
-assert u32(raw,le+0x44)==1 and u32(raw,le+0x14)==1, 'Only a single locked page is supported by this test'
-obj=le+u32(raw,le+0x40)
-size=u32(raw,obj)
-start=u32(raw,le+0x80)
-code=bytearray(raw[start:start+size])
-assert code[12:20]==b'TM95STAT'
-records=le+u32(raw,le+0x6c)
-page_table=le+u32(raw,le+0x68)
-a,b=struct.unpack_from('<II',raw,page_table)
-for pos in range(records+a,records+b,7):
-    source,flags,offset,target,value=struct.unpack_from('<BBhBH',raw,pos)
-    assert (source,flags,target)==(7,0,1), 'Unexpected LE relocation'
-    struct.pack_into('<I',code,offset,base+value)
+def image(path,identity):
+    raw=Path(path).read_bytes()
+    le=u32(raw,0x3c)
+    assert raw[le:le+2]==b'LE'
+    assert u32(raw,le+0x44)==1 and u32(raw,le+0x14)==1, 'Only a single locked page is supported by this test'
+    obj=le+u32(raw,le+0x40)
+    size=u32(raw,obj)
+    start=u32(raw,le+0x80)
+    code=bytearray(raw[start:start+size])
+    assert code[12:20]==identity
+    assert u32(raw,obj+8)&0x8000
+    entry=le+u32(raw,le+0x5c)
+    assert struct.unpack_from('<BBH',raw,entry)==(1,3,1)
+    assert u32(raw,entry+5)==0
+    records=le+u32(raw,le+0x6c)
+    page_table=le+u32(raw,le+0x68)
+    a,b=struct.unpack_from('<II',raw,page_table)
+    for pos in range(records+a,records+b,7):
+        source,flags,offset,target,value=struct.unpack_from('<BBhBH',raw,pos)
+        assert (source,flags,target)==(7,0,1), 'Unexpected LE relocation'
+        struct.pack_into('<I',code,offset,base+value)
+    return code
+code=image('build/tm95stat.vxd',b'TM95STAT')
 uc=Uc(UC_ARCH_X86,UC_MODE_32)
 for address in (base,stack,request,sentinel): uc.mem_map(address,0x10000)
 uc.mem_write(base,bytes(code));uc.mem_write(sentinel+0x100,b'\xf8\xc3')
@@ -119,3 +126,20 @@ assert run(control,EAX=0x1c)[1]==0
 assert ioctl(1)[2][7]==0
 print('PASS: actual LE x86 code, DIOC ABI, buffer sizes, hook chaining, CAD, heartbeat, ownership and unload')
 print('VMM is emulated; real Windows 95/VKD execution is NOT tested')
+
+# The diagnostic device must load/query/unload without a single VMM service.
+code=image('build/tm95test.vxd',b'TM95TEST')
+uc=Uc(UC_ARCH_X86,UC_MODE_32)
+for address in (base,stack,request,sentinel): uc.mem_map(address,0x10000)
+uc.hook_add(UC_HOOK_INTR,interrupt)
+uc.mem_write(base,bytes(code));control=u32(code,24);services.clear()
+assert run(control,EAX=0x1b)[1]==0
+assert ioctl(0)[0]==0
+assert ioctl(1,out=8)[0:2]==(0,8)
+assert ioctl(1,out=8)[2][0:2]==(8,0x39354d54)
+assert ioctl(1,out=7)[0:2]==(87,0)
+assert ioctl(99)[0]==50
+assert ioctl(0xffffffff,out=0)[0]==0
+assert run(control,EAX=0x1c)[1]==0
+assert not services
+print('PASS: inert probe LE loads/answers/unloads in x86 without VMM calls')

@@ -47,3 +47,5 @@
 #define ID_PROC_SORT_DESCENDING 247
 
 #define ID_CAD 215
+
+#define IDR_VXD_PROBE 216

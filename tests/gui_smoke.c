@@ -375,7 +375,7 @@ int main(int argc,char **argv)
     verify(target!=NULL,"application starts");
     if(!target) return 1;
     GetWindowTextW(target,title,100);
-    verify(wcsstr(title,L"alpha 10")!=NULL,"alpha 10 build is running");
+    verify(wcsstr(title,L"alpha 11")!=NULL,"alpha 11 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);

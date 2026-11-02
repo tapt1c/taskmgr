@@ -19,4 +19,7 @@ typedef char tm95_sample_size_must_be_32[(sizeof(TM95_VXD_SAMPLE)==32)?1:-1];
 typedef struct {
     DWORD size,version,enable;
 } TM95_CAD_REQUEST;
+/* A separate, inert device used only to diagnose dynamic loading failures. */
+#define TM95_PROBE_MAGIC 0x39354d54UL
+typedef struct { DWORD size,magic; } TM95_PROBE_SAMPLE;
 #endif

@@ -5,24 +5,13 @@
  * Swallowed Delete makes are converted to breaks so an already forwarded E0
  * prefix is consumed normally by VKD; never strand its prefix state.
  */
-typedef unsigned long DWORD;
-typedef unsigned short WORD;
-typedef unsigned char BYTE;
+#include "vxd_abi.h"
 #define TM95_RING0
 #include "protocol.h"
 #pragma data_seg("_LTEXT", "CODE")
 #pragma code_seg("_LTEXT", "CODE")
 #pragma const_seg("_LTEXT", "CODE")
 #include "cad_policy.h"
-struct DIOC {
-    DWORD internal1, vm, internal2, code;
-    void *input;
-    DWORD input_size;
-    void *output;
-    DWORD output_size;
-    DWORD *returned;
-    DWORD overlapped, device, process;
-};
 static DWORD system_time(void);
 #pragma aux system_time = "int 20h" "dd 0001003fh" value [eax] modify exact [eax]
 static DWORD free_pages(void);

@@ -12,6 +12,7 @@ BEGIN
     PUSHBUTTON "Cancel", IDCANCEL, 182, 54, 50, 14
 END
 IDR_VXD RCDATA "build/tm95stat.vxd"
+IDR_VXD_PROBE RCDATA "build/tm95test.vxd"
 
 1 VERSIONINFO
 FILEVERSION TM95_FILE_VERSION
@@ -26,10 +27,10 @@ BEGIN
     BEGIN
         BLOCK "040904E4"
         BEGIN
-            VALUE "FileDescription", "Task Manager 95 - alpha 10\0"
+            VALUE "FileDescription", "Task Manager 95 - alpha 11\0"
             VALUE "FileVersion", TM95_VERSION_STRING "\0"
             VALUE "InternalName", "taskmgr95\0"
-            VALUE "OriginalFilename", "taskmgr95-alpha10.exe\0"
+            VALUE "OriginalFilename", "taskmgr95-alpha11.exe\0"
             VALUE "ProductName", "Task Manager 95\0"
             VALUE "ProductVersion", TM95_VERSION_STRING "\0"
         END

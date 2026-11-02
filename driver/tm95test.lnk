@@ -1,0 +1,9 @@
+system win_vxd dynamic
+option quiet
+option nodefaultlibs
+option map=build/tm95test.map
+name build/tm95test.vxd
+file build/tm95probe_ddb.obj
+file build/tm95probe.obj
+segment '_LTEXT' PRELOAD NONDISCARDABLE IOPL
+export TM95_DDB.1
