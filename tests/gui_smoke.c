@@ -373,13 +373,21 @@ int main(int argc,char **argv)
     verify(target!=NULL,"application starts");
     if(!target) return 1;
     GetWindowTextW(target,title,100);
-    verify(wcsstr(title,L"alpha 8")!=NULL,"alpha 8 build is running");
+    verify(wcsstr(title,L"alpha 9")!=NULL,"alpha 9 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);
     verify(tab!=NULL,"tab control exists");
     verify(SendMessageA(tab,TCM_GETITEMCOUNT,0,0)==3,"three tabs");
     SendMessageA(target,WM_COMMAND,ID_ENGLISH,0);
+    PostMessageA(target,WM_COMMAND,ID_DRIVER,0);
+    dialog=wait_dialog();verify(dialog!=NULL,"NT refuses VxD loading with an error dialog");
+    if(dialog) SendMessageA(dialog,WM_COMMAND,IDOK,0);
+    Sleep(100);
+    PostMessageA(target,WM_COMMAND,ID_CAD,0);
+    dialog=wait_dialog();verify(dialog!=NULL,"NT refuses the Win9x CAD hook");
+    if(dialog) SendMessageA(dialog,WM_COMMAND,IDOK,0);
+    Sleep(100);
     for(page=0;page<3;++page) {
         change_page(tab,page);Sleep(1100);check_page(page);
     }

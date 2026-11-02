@@ -26,10 +26,10 @@ BEGIN
     BEGIN
         BLOCK "040904E4"
         BEGIN
-            VALUE "FileDescription", "Task Manager 95 - alpha 8\0"
+            VALUE "FileDescription", "Task Manager 95 - alpha 9\0"
             VALUE "FileVersion", TM95_VERSION_STRING "\0"
             VALUE "InternalName", "taskmgr95\0"
-            VALUE "OriginalFilename", "taskmgr95-alpha8.exe\0"
+            VALUE "OriginalFilename", "taskmgr95-alpha9.exe\0"
             VALUE "ProductName", "Task Manager 95\0"
             VALUE "ProductVersion", TM95_VERSION_STRING "\0"
         END

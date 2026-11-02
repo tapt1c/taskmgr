@@ -97,6 +97,7 @@ static const WCHAR *words[T_COUNT][2] = {
     {L"User Name",L"Пользователь"},
     {L"Fit Image Name to Window",L"Подбирать ширину имени образа"},
     {L"RAM (KB)",L"ОЗУ (КБ)"},
+    {L"Replace Ctrl+Alt+Del (resident)",L"Заменять Ctrl+Alt+Del (резидентно)"},
 };
 void language_init(BOOL russian)
 {

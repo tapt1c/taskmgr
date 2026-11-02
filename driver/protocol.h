@@ -3,14 +3,20 @@
 #ifndef TM95_RING0
 #include <windows.h>
 #endif
-#define TM95_PROTOCOL_VERSION 2UL
+#define TM95_PROTOCOL_VERSION 3UL
 #define TM95_IOCTL_QUERY 1UL
+#define TM95_IOCTL_CAD 2UL
+#define TM95_CAP_CAD 4UL
 #define TM95_CAP_UPTIME 1UL
 #define TM95_CAP_PAGE_COUNTS 2UL
-/* Read-only VMM counters. No CPU/per-process memory capability is claimed. */
+/* Only advertise implemented capabilities; per-process metrics remain separate. */
 typedef struct {
     DWORD size, version, capabilities;
     DWORD uptime_ms, free_pages, system_pages;
+    DWORD cad_events, cad_armed;
 } TM95_VXD_SAMPLE;
-typedef char tm95_sample_size_must_be_24[(sizeof(TM95_VXD_SAMPLE)==24)?1:-1];
+typedef char tm95_sample_size_must_be_32[(sizeof(TM95_VXD_SAMPLE)==32)?1:-1];
+typedef struct {
+    DWORD size,version,enable;
+} TM95_CAD_REQUEST;
 #endif

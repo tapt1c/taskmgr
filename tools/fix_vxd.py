@@ -17,5 +17,11 @@ for i in range(count):
     assert pos+24 <= len(data)
     flags = struct.unpack_from('<I', data, pos+8)[0]
     struct.pack_into('<II', data, pos+4, 0, flags | 4)
+# This driver's DDB must be first, in the sole locked object. In particular,
+# Watcom BSS must not precede it when state variables are added to the driver.
+assert count == 1, 'Expected a single locked object for code, state and DDB'
+page_data = struct.unpack_from('<I', data, le+0x80)[0]
+assert data[page_data+12:page_data+20] == b'TM95STAT', 'DDB is not first in the locked object'
+assert struct.unpack_from('<I', data, page_data+64)[0] == 80, 'Invalid DDB size'
 p.write_bytes(data)
 print(f'LE VxD: {count} object(s), {len(data)} bytes; runtime UNTESTED')

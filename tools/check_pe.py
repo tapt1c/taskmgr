@@ -13,8 +13,8 @@ from pathlib import Path
 # Deliberately narrow set of baseline APIs used by this program.
 ALLOWED = {
     'KERNEL32.dll': '''CloseHandle CreateProcessA ExitProcess GetCurrentProcessId
-        GetFullPathNameA GetPrivateProfileIntA GetProcessHeap HeapAlloc HeapReAlloc HeapFree GetTickCount
-        GetLastError GetModuleHandleA GetProcAddress GlobalMemoryStatus
+        GetFullPathNameA GetShortPathNameA GetPrivateProfileIntA GetProcessHeap HeapAlloc HeapReAlloc HeapFree GetTickCount
+        GetLastError GetModuleHandleA GetModuleFileNameA GetCommandLineA GetProcAddress GlobalMemoryStatus
         OpenProcess SetPriorityClass TerminateProcess lstrcpyA lstrcatA lstrlenA
         GetVersion GetACP WideCharToMultiByte MultiByteToWideChar GetPrivateProfileStringA
         WritePrivateProfileStringA LoadLibraryA FreeLibrary SetLastError
@@ -23,7 +23,7 @@ ALLOWED = {
     'USER32.dll': '''AppendMenuA BeginPaint CheckMenuItem CreateMenu CreatePopupMenu
         CreateWindowExA DefWindowProcA DestroyWindow DialogBoxParamA DispatchMessageA
         EnableWindow EndDialog EndPaint EnumWindows FillRect GetClientRect
-        GetDlgItemTextA GetMessageA GetMenu GetWindow GetWindowTextA
+        GetDlgItemTextA GetMessageA GetMenu GetWindow GetWindowTextA FindWindowA
         GetWindowThreadProcessId InvalidateRect IsDialogMessageA IsIconic
         IsWindow IsWindowVisible KillTimer LoadCursorA LoadIconA MessageBoxA
         MoveWindow PostMessageA PostQuitMessage RegisterClassA SendDlgItemMessageA
@@ -38,7 +38,7 @@ ALLOWED = {
         CreateCompatibleBitmap DeleteDC CreateSolidBrush SetViewportOrgEx'''.split(),
     'COMCTL32.DLL': ['InitCommonControls', 'ImageList_Create', 'ImageList_Destroy', 'ImageList_GetImageCount', 'ImageList_ReplaceIcon'],
     'SHELL32.dll': ['ShellAboutA', 'ExtractIconExA'],
-    'ADVAPI32.dll': ['RegOpenKeyExA', 'RegQueryValueExA', 'RegCloseKey'],
+    'ADVAPI32.dll': ['RegOpenKeyExA', 'RegQueryValueExA', 'RegCloseKey', 'RegCreateKeyExA', 'RegSetValueExA', 'RegDeleteValueA'],
 }
 
 def check(path, objdump):

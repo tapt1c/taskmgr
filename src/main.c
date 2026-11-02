@@ -5,6 +5,7 @@
 #include "performance.h"
 #include "applications.h"
 #include "processes.h"
+#include "cad.h"
 #include "i18n.h"
 #include <shellapi.h>
 
@@ -269,6 +270,7 @@ static HMENU create_menu(void)
     language_menu(options,MF_STRING | (paused?MF_CHECKED:0),ID_PAUSE,T_PAUSE);
     language_menu(options,MF_STRING,ID_REFRESH,T_REFRESH);
     language_menu(options,MF_STRING | (system_info.vxd_valid?MF_CHECKED:0),ID_DRIVER,T_DRIVER);
+    language_menu(options,MF_STRING | (cad_enabled()?MF_CHECKED:0),ID_CAD,T_CAD);
     language_menu(priority,MF_STRING,ID_IDLE,T_IDLE);
     language_menu(priority,MF_STRING,ID_NORMAL,T_NORMAL);
     language_menu(priority,MF_STRING,ID_HIGH,T_HIGH);
@@ -356,7 +358,14 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         }
         if (((NMHDR *)lp)->code == LVN_ITEMCHANGED) update_actions();
         return 0;
-    case WM_TIMER: if (!paused) refresh(); return 0;
+    case WM_CLOSE:
+        if(cad_enabled()) ShowWindow(w,SW_HIDE);else DestroyWindow(w);
+        return 0;
+    case WM_TIMER:
+        if(cad_poll()) { ShowWindow(w,SW_RESTORE);SetForegroundWindow(w); }
+        if(!paused) refresh();
+        CheckMenuItem(GetMenu(w),ID_CAD,MF_BYCOMMAND | (cad_enabled()?MF_CHECKED:MF_UNCHECKED));
+        return 0;
     case WM_COMMAND:
         if(page==0 && applications_command(LOWORD(wp))) { applications_refresh(&system_info);update_actions();return 0; }
         if(page==1 && processes_command(LOWORD(wp))) { refresh();return 0; }
@@ -380,10 +389,18 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_IDLE: priority_selected(IDLE_PRIORITY_CLASS); break;
         case ID_NORMAL: priority_selected(NORMAL_PRIORITY_CLASS); break;
         case ID_HIGH: priority_selected(HIGH_PRIORITY_CLASS); break;
+        case ID_CAD:
+            if(cad_enabled()) {
+                if(!cad_disable(TRUE)) error_message(w,"Ctrl+Alt+Del");
+            } else if(!cad_enable(instance,TRUE)) error_message(w,driver_error()?driver_stage():"Ctrl+Alt+Del");
+            refresh();localize();break;
         case ID_DRIVER:
-            if(system_info.vxd_valid) driver_close();
+            if(system_info.vxd_valid) {
+                if(cad_enabled() && !cad_disable(TRUE)) { error_message(w,"Ctrl+Alt+Del");break; }
+                driver_close();
+            }
             else if(!driver_enable(instance)) {
-                SetLastError(driver_error());error_message(w,"VxD");
+                SetLastError(driver_error());error_message(w,driver_stage());
             }
             refresh();localize();break;
         case ID_ENGLISH:
@@ -402,7 +419,7 @@ static LRESULT CALLBACK window_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         }
         }
         return 0;
-    case WM_DESTROY: applications_close();processes_close();KillTimer(w, 1); tm_system_close(&system_info); PostQuitMessage(0); return 0;
+    case WM_DESTROY: cad_close();applications_close();processes_close();KillTimer(w, 1); tm_system_close(&system_info); PostQuitMessage(0); return 0;
     }
     return main_default(w, msg, wp, lp);
 }
@@ -413,6 +430,10 @@ void WINAPI WinMainCRTStartup(void)
     HWND w;
     BOOL result;
     instance = GetModuleHandleA(NULL);
+    {
+        HWND existing=FindWindowA(APP_CLASS,NULL);
+        if(existing) { ShowWindow(existing,SW_RESTORE);SetForegroundWindow(existing);ExitProcess(0); }
+    }
     {
         char language[8];
         GetPrivateProfileStringA("Interface","Language",GetACP()==1251?"ru":"en",language,sizeof(language),".\\taskmgr95.ini");
@@ -448,7 +469,11 @@ void WINAPI WinMainCRTStartup(void)
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
         400, 450, NULL, create_menu(), instance, NULL);
     if (!w) ExitProcess(1);
-    ShowWindow(w, SW_SHOWDEFAULT); UpdateWindow(w);
+    if(cad_requested() || cad_resident_argument()) {
+        if(!cad_enable(instance,FALSE)) error_message(w,driver_stage());
+        localize();
+    }
+    ShowWindow(w,cad_resident_argument() && cad_enabled()?SW_HIDE:SW_SHOWDEFAULT);UpdateWindow(w);
     while ((result = GetMessageA(&msg, NULL, 0, 0)) > 0) {
         if (!IsDialogMessageA(w, &msg)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
     }

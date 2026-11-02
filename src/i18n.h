@@ -96,6 +96,7 @@ enum {
     T_PROC_USER,
     T_PROC_AUTOFIT,
     T_PROC_MEMORY,
+    T_CAD,
     T_COUNT
 };
 void language_init(BOOL russian);
