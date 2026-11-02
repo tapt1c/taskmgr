@@ -241,6 +241,70 @@ static void applications_workflow(HWND tab,HANDLE process)
     SendMessageA(target,WM_COMMAND,ID_VIEW_SMALL,0);
     VirtualFreeEx(process,remote_buffer,0,MEM_RELEASE);remote_buffer=NULL;
 }
+static HWND process_list(HWND tab)
+{
+    HWND page;
+    change_page(tab,1);
+    for(page=GetWindow(target,GW_CHILD);page;page=GetWindow(page,GW_HWNDNEXT))
+        if(IsWindowVisible(page) && GetDlgItem(page,303)) return GetDlgItem(page,303);
+    return NULL;
+}
+static void processes_workflow(HWND tab,HANDLE process)
+{
+    HWND list=process_list(tab),dialog,header;
+    LVFINDINFOA find={0};
+    LVITEMW item={0};
+    WCHAR text[256],user[256],*base;
+    DWORD length=256;
+    int index=-1;
+    app_process=process;
+    remote_buffer=VirtualAllocEx(process,NULL,2048,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
+    verify(list && remote_buffer,"can inspect the processes control");
+    if(!list || !remote_buffer) return;
+    SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
+    find.flags=LVFI_PARAM;find.lParam=GetCurrentProcessId();
+    WriteProcessMemory(process,remote_buffer,&find,sizeof(find),NULL);
+    index=(int)SendMessageA(list,LVM_FINDITEMA,(WPARAM)-1,(LPARAM)remote_buffer);
+    item.iSubItem=1;item.cchTextMax=256;item.pszText=(WCHAR *)((BYTE *)remote_buffer+512);
+    WriteProcessMemory(process,remote_buffer,&item,sizeof(item),NULL);
+    text[0]=user[0]=0;
+    SendMessageA(list,LVM_GETITEMTEXTW,index,(LPARAM)remote_buffer);
+    ReadProcessMemory(process,item.pszText,text,sizeof(text),NULL);text[255]=0;
+    base=wcsrchr(text,L'\\');base=base?base+1:text;
+    verify(index>=0 && GetUserNameW(user,&length) && !_wcsicmp(base,user),"own process shows its token user name");
+    PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
+    dialog=wait_dialog();verify(dialog!=NULL,"process column editor opens");
+    if(dialog) {
+        select_column(dialog,1);SetDlgItemTextA(dialog,IDC_COLUMN_WIDTH,"133");
+        SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_DOWN,0);
+        select_column(dialog,5);
+        CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,BST_UNCHECKED);
+        SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_VISIBLE,0);
+        SendMessageA(dialog,WM_COMMAND,IDOK,0);
+    }
+    header=(HWND)SendMessageA(list,LVM_GETHEADER,0,0);
+    verify(Header_GetItemCount(header)==5 && ListView_GetColumnWidth(list,2)==133,
+        "process columns can be hidden, reordered and resized");
+    ListView_SetColumnWidth(list,0,171);
+    SendMessageA(target,WM_COMMAND,ID_PROC_SORT_PID,0);
+    SendMessageA(target,WM_COMMAND,ID_PROC_SORT_DESCENDING,0);
+    /* Selection remains a PID even when PID is moved and the table is sorted. */
+    WriteProcessMemory(process,remote_buffer,&find,sizeof(find),NULL);
+    index=(int)SendMessageA(list,LVM_FINDITEMA,(WPARAM)-1,(LPARAM)remote_buffer);
+    ZeroMemory(&item,sizeof(item));item.state=item.stateMask=LVIS_SELECTED | LVIS_FOCUSED;
+    WriteProcessMemory(process,remote_buffer,&item,sizeof(item),NULL);
+    SendMessageA(list,LVM_SETITEMSTATE,index,(LPARAM)remote_buffer);
+    MoveWindow(target,8,8,400,450,TRUE);
+    SendMessageA(target,WM_COMMAND,ID_REFRESH,0);
+    index=(int)SendMessageA(list,LVM_GETNEXTITEM,(WPARAM)-1,LVNI_SELECTED);
+    ZeroMemory(&item,sizeof(item));item.mask=LVIF_PARAM;item.iItem=index;
+    WriteProcessMemory(process,remote_buffer,&item,sizeof(item),NULL);
+    SendMessageA(list,LVM_GETITEMW,0,(LPARAM)remote_buffer);
+    ReadProcessMemory(process,remote_buffer,&item,sizeof(item),NULL);
+    verify(index>=0 && (DWORD)item.lParam==GetCurrentProcessId() && ListView_GetColumnWidth(list,0)==171,
+        "PID selection and manual process width survive sorting, resize and refresh");
+    VirtualFreeEx(process,remote_buffer,0,MEM_RELEASE);remote_buffer=NULL;
+}
 int main(int argc,char **argv)
 {
     STARTUPINFOA start={0};
@@ -261,7 +325,7 @@ int main(int argc,char **argv)
     verify(target!=NULL,"application starts");
     if(!target) return 1;
     GetWindowTextW(target,title,100);
-    verify(wcsstr(title,L"alpha 6")!=NULL,"alpha 6 build is running");
+    verify(wcsstr(title,L"alpha 7")!=NULL,"alpha 7 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);
@@ -279,6 +343,7 @@ int main(int argc,char **argv)
         check_page(page);
     }
     applications_workflow(tab,process.hProcess);
+    processes_workflow(tab,process.hProcess);
     SendMessageA(target,WM_COMMAND,ID_RUSSIAN,0);
     GetWindowTextW(target,title,100);
     verify(title[0]==0x414 && title[1]==0x438,"Russian Unicode title");
@@ -334,6 +399,15 @@ int main(int argc,char **argv)
         verify(restored && Header_GetItemCount((HWND)SendMessageA(restored,LVM_GETHEADER,0,0))==5 &&
             ListView_GetColumnWidth(restored,0)==190 && ListView_GetColumnWidth(restored,1)==77,
             "column choices and widths persist after restart");
+        tab=GetDlgItem(target,301);
+        {
+            HWND list=process_list(tab);
+            verify(list && Header_GetItemCount((HWND)SendMessageA(list,LVM_GETHEADER,0,0))==5 &&
+                ListView_GetColumnWidth(list,0)==171 && ListView_GetColumnWidth(list,2)==133 &&
+                (GetMenuState(GetSubMenu(GetMenu(target),2),ID_PROC_SORT_PID,MF_BYCOMMAND)&MF_CHECKED),
+                "process preferences persist independently after restart");
+            change_page(tab,0);
+        }
         SendMessageA(target,WM_COMMAND,ID_SORT_TASK,0);
         /* Show a compact, useful pair of columns in the captured example. */
         PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
@@ -347,6 +421,18 @@ int main(int argc,char **argv)
             }
             CheckDlgButton(dialog,IDC_COLUMN_AUTOFIT,BST_CHECKED);
             SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_AUTOFIT,0);
+            SendMessageA(dialog,WM_COMMAND,IDOK,0);
+        }
+    }
+    if(target) {
+        tab=GetDlgItem(target,301);change_page(tab,1);
+        PostMessageA(target,WM_COMMAND,ID_VIEW_COLUMNS,0);
+        dialog=wait_dialog();
+        if(dialog) {
+            for(i=3;i<6;++i) {
+                select_column(dialog,i);CheckDlgButton(dialog,IDC_COLUMN_VISIBLE,BST_UNCHECKED);
+                SendMessageA(dialog,WM_COMMAND,IDC_COLUMN_VISIBLE,0);
+            }
             SendMessageA(dialog,WM_COMMAND,IDOK,0);
         }
     }

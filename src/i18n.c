@@ -94,6 +94,8 @@ static const WCHAR *words[T_COUNT][2] = {
     {L"Show Column",L"Показывать"},
     {L"Width (pixels):",L"Ширина (пикс.):"},
     {L"Enter a column width from 32 to 1200 pixels.",L"Введите ширину столбца от 32 до 1200 пикселей."},
+    {L"User Name",L"Пользователь"},
+    {L"Fit Image Name to Window",L"Подбирать ширину имени образа"},
 };
 void language_init(BOOL russian)
 {

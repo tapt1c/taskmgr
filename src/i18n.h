@@ -93,6 +93,8 @@ enum {
     T_APP_VISIBLE,
     T_APP_WIDTH,
     T_APP_WIDTH_ERROR,
+    T_PROC_USER,
+    T_PROC_AUTOFIT,
     T_COUNT
 };
 void language_init(BOOL russian);
