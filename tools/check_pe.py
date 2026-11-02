@@ -19,7 +19,8 @@ ALLOWED = {
         GetVersion GetACP WideCharToMultiByte MultiByteToWideChar GetPrivateProfileStringA
         WritePrivateProfileStringA LoadLibraryA FreeLibrary SetLastError
         FindResourceA SizeofResource LoadResource LockResource GetTempPathA
-        GetTempFileNameA CreateFileA WriteFile DeleteFileA MoveFileA DeviceIoControl'''.split(),
+        GetTempFileNameA CreateFileA ReadFile WriteFile DeleteFileA CreateDirectoryA RemoveDirectoryA
+        GetCurrentDirectoryA SetCurrentDirectoryA DeviceIoControl'''.split(),
     'USER32.dll': '''AppendMenuA BeginPaint CheckMenuItem CreateMenu CreatePopupMenu
         CreateWindowExA DefWindowProcA DestroyWindow DialogBoxParamA DispatchMessageA
         EnableWindow EndDialog EndPaint EnumWindows FillRect GetClientRect

@@ -1,8 +1,10 @@
 #include "driver.h"
 #include "resource.h"
 static HANDLE device=INVALID_HANDLE_VALUE;
-static char driver_path[MAX_PATH],attempt_name[MAX_PATH+8];
-static DWORD resource_length;
+static BOOL file_created;
+static char driver_path[MAX_PATH],driver_directory[MAX_PATH];
+static char attempt_name[MAX_PATH+8],attempt_file[MAX_PATH];
+static DWORD resource_length,verified_bytes,absolute_error,relative_error;
 static DWORD last_error;
 static const char *last_stage="idle";
 const char *driver_stage(void) { return last_stage; }
@@ -11,8 +13,11 @@ void driver_close(void)
 {
     if(device!=INVALID_HANDLE_VALUE) CloseHandle(device);
     device=INVALID_HANDLE_VALUE;
-    if(driver_path[0]) DeleteFileA(driver_path);
+    if(file_created && driver_path[0]) DeleteFileA(driver_path);
+    file_created=FALSE;
     driver_path[0]=0;
+    if(driver_directory[0]) RemoveDirectoryA(driver_directory);
+    driver_directory[0]=0;
 }
 BOOL driver_sample(TM95_VXD_SAMPLE *sample)
 {
@@ -29,20 +34,76 @@ BOOL driver_sample(TM95_VXD_SAMPLE *sample)
     }
     last_error=0;return TRUE;
 }
+static BOOL verify_file(const char *path,const BYTE *expected,DWORD length)
+{
+    HANDLE file;
+    BYTE buffer[512];
+    DWORD offset=0,count,got,i,error=0;
+    last_stage="read back VxD file";
+    file=CreateFileA(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(file==INVALID_HANDLE_VALUE) { last_error=GetLastError();return FALSE; }
+    while(offset<length) {
+        count=length-offset;if(count>sizeof(buffer)) count=sizeof(buffer);
+        if(!ReadFile(file,buffer,count,&got,NULL)) { error=GetLastError();break; }
+        if(got!=count) { error=ERROR_READ_FAULT;break; }
+        for(i=0;i<got;++i) if(buffer[i]!=expected[offset+i]) { error=ERROR_INVALID_DATA;break; }
+        if(error) break;
+        offset+=got;
+    }
+    if(!error) {
+        if(!ReadFile(file,buffer,1,&got,NULL)) error=GetLastError();
+        else if(got) error=ERROR_INVALID_DATA;
+    }
+    CloseHandle(file);
+    if(error) { last_error=error;return FALSE; }
+    verified_bytes=offset;return TRUE;
+}
+static BOOL open_device(const char *path)
+{
+    char original[MAX_PATH];
+    DWORD length,open_error;
+    lstrcpyA(attempt_name,"\\\\.\\");lstrcatA(attempt_name,path);
+    last_stage="CreateFile VxD (full path)";
+    device=CreateFileA(attempt_name,0,0,NULL,0,FILE_FLAG_DELETE_ON_CLOSE,NULL);
+    if(device!=INVALID_HANDLE_VALUE) return TRUE;
+    absolute_error=GetLastError();
+    if(absolute_error!=ERROR_FILE_NOT_FOUND && absolute_error!=ERROR_PATH_NOT_FOUND) {
+        last_error=absolute_error;return FALSE;
+    }
+    /* Also support the documented name-only VxD form. Scope the directory change
+       to this synchronous call and restore it before sampling or any UI work. */
+    last_stage="get original directory";
+    length=GetCurrentDirectoryA(sizeof(original),original);
+    if(!length || length>=sizeof(original)) {
+        last_error=length?ERROR_FILENAME_EXCED_RANGE:GetLastError();return FALSE;
+    }
+    last_stage="set VxD directory";
+    if(!SetCurrentDirectoryA(driver_directory)) { last_error=GetLastError();return FALSE; }
+    lstrcpyA(attempt_name,"\\\\.\\TM95STAT.VXD");
+    device=CreateFileA(attempt_name,0,0,NULL,0,FILE_FLAG_DELETE_ON_CLOSE,NULL);
+    open_error=device==INVALID_HANDLE_VALUE?GetLastError():0;
+    relative_error=open_error;
+    last_stage="restore original directory";
+    if(!SetCurrentDirectoryA(original)) { last_error=GetLastError();return FALSE; }
+    last_stage="CreateFile VxD (name)";
+    if(open_error) { last_error=open_error;return FALSE; }
+    return TRUE;
+}
 static BOOL enable_driver(HINSTANCE instance)
 {
     HRSRC resource;
     HGLOBAL loaded;
     const void *bytes;
     DWORD length,written=0,temp_length;
-    char directory[MAX_PATH],temporary[MAX_PATH],short_path[MAX_PATH],name[MAX_PATH+8];
+    char directory[MAX_PATH],temporary[MAX_PATH],short_path[MAX_PATH];
     DWORD short_length;
     HANDLE file;
     TM95_VXD_SAMPLE sample;
     if(device!=INVALID_HANDLE_VALUE) return TRUE;
     /* Never attempt to load a VxD into NT/Wine. */
     if(!(GetVersion() & 0x80000000UL)) { last_stage="VxD requires Win9x";last_error=ERROR_NOT_SUPPORTED;return FALSE; }
-    last_error=0;resource_length=0;attempt_name[0]=0;last_stage="resource";
+    last_error=0;resource_length=verified_bytes=absolute_error=relative_error=0;
+    attempt_name[0]=attempt_file[0]=0;last_stage="resource";
     resource=FindResourceA(instance,MAKEINTRESOURCEA(IDR_VXD),RT_RCDATA);
     if(!resource) { last_error=GetLastError();return FALSE; }
     length=SizeofResource(instance,resource);resource_length=length;
@@ -52,36 +113,37 @@ static BOOL enable_driver(HINSTANCE instance)
     last_stage="temporary path";
     temp_length=GetTempPathA(sizeof(directory),directory);
     if(!temp_length) { last_error=GetLastError();return FALSE; }
-    if(temp_length>MAX_PATH-20) { last_error=ERROR_FILENAME_EXCED_RANGE;return FALSE; }
+    if(temp_length>MAX_PATH-32) { last_error=ERROR_FILENAME_EXCED_RANGE;return FALSE; }
     if(!GetTempFileNameA(directory,"TM9",0,temporary)) { last_error=GetLastError();return FALSE; }
-    last_stage="extract file";
-    file=CreateFileA(temporary,GENERIC_WRITE,0,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
-    if(file==INVALID_HANDLE_VALUE) { last_error=GetLastError();DeleteFileA(temporary);return FALSE; }
+    /* Keep the filename equal to the LE module and DDB identity. Isolate it
+       filename in a directory we created rather than randomizing its basename. */
+    last_stage="create VxD directory";
+    if(!DeleteFileA(temporary)) { last_error=GetLastError();return FALSE; }
+    if(!CreateDirectoryA(temporary,NULL)) { last_error=GetLastError();return FALSE; }
+    lstrcpyA(driver_directory,temporary);
+    lstrcpyA(driver_path,temporary);lstrcatA(driver_path,"\\TM95STAT.VXD");
+    lstrcpyA(attempt_file,driver_path);
+    last_stage="extract TM95STAT.VXD";
+    file=CreateFileA(driver_path,GENERIC_WRITE,0,NULL,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(file==INVALID_HANDLE_VALUE) { last_error=GetLastError();driver_close();return FALSE; }
+    file_created=TRUE;
     if(!WriteFile(file,bytes,length,&written,NULL)) {
-        last_error=GetLastError();CloseHandle(file);DeleteFileA(temporary);return FALSE;
+        last_error=GetLastError();CloseHandle(file);driver_close();return FALSE;
     }
     if(written!=length) {
-        last_error=ERROR_WRITE_FAULT;CloseHandle(file);DeleteFileA(temporary);return FALSE;
+        last_error=ERROR_WRITE_FAULT;CloseHandle(file);driver_close();return FALSE;
     }
     CloseHandle(file);
-    /* Replace .TMP rather than appending .TMP.VXD: keep the basename DOS 8.3. */
-    lstrcpyA(driver_path,temporary);
-    lstrcpyA(driver_path+lstrlenA(driver_path)-3,"VXD");
-    last_stage="rename VXD";
-    /* MoveFile never overwrites another task's driver file. */
-    if(!MoveFileA(temporary,driver_path)) {
-        last_error=GetLastError();DeleteFileA(temporary);driver_path[0]=0;return FALSE;
-    }
     /* Win9x VxD loading uses DOS paths even when TEMP contains long components. */
     last_stage="DOS 8.3 path";
     short_length=GetShortPathNameA(driver_path,short_path,sizeof(short_path));
     if(!short_length || short_length>=sizeof(short_path)) {
         last_error=short_length?ERROR_FILENAME_EXCED_RANGE:GetLastError();driver_close();return FALSE;
     }
-    lstrcpyA(name,"\\\\.\\");lstrcatA(name,short_path);
-    lstrcpyA(attempt_name,name);last_stage="CreateFile VxD (8.3)";
-    device=CreateFileA(name,0,0,NULL,0,FILE_FLAG_DELETE_ON_CLOSE,NULL);
-    if(device==INVALID_HANDLE_VALUE) { last_error=GetLastError();driver_close();return FALSE; }
+    lstrcpyA(attempt_file,short_path);
+    if(!verify_file(short_path,(const BYTE *)bytes,length) || !open_device(short_path)) {
+        driver_close();return FALSE;
+    }
     if(!driver_sample(&sample)) { driver_close();return FALSE; }
     last_error=0;return TRUE;
 }
@@ -106,7 +168,7 @@ BOOL driver_enable(HINSTANCE instance)
         char report[1024];
         HANDLE file;
         DWORD length,written;
-        length=(DWORD)wsprintfA(report,"Taskmgr95 VxD protocol %lu\r\nGetVersion: %08lX\r\nStage: %s\r\nError: %lu\r\nDevice: %s\r\nEmbedded bytes: %lu\r\n",TM95_PROTOCOL_VERSION,GetVersion(),last_stage,last_error,attempt_name,resource_length);
+        length=(DWORD)wsprintfA(report,"Taskmgr95 VxD protocol %lu\r\nGetVersion: %08lX\r\nStage: %s\r\nError: %lu\r\nDevice: %s\r\nFile: %s\r\nEmbedded bytes: %lu\r\nReadback bytes: %lu\r\nFull-path error: %lu\r\nName-only error: %lu\r\n",TM95_PROTOCOL_VERSION,GetVersion(),last_stage,last_error,attempt_name,attempt_file,resource_length,verified_bytes,absolute_error,relative_error);
         file=CreateFileA(".\\taskmgr95-vxd.log",GENERIC_WRITE,FILE_SHARE_READ,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
         if(file!=INVALID_HANDLE_VALUE) { WriteFile(file,report,length,&written,NULL);CloseHandle(file); }
     }

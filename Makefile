@@ -49,8 +49,8 @@ build/wine64/taskmgr.res.o: src/taskmgr.rc src/resource.h src/version.h build/tm
 	$(WINE_RC) --preprocessor $(WINE_CC) --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED $(CPPFLAGS) $< -o $@
 build/wine64/taskmgr95-ui.exe: $(UI_OBJECTS) build/wine64/taskmgr.res.o
 	$(WINE_CC) -nostdlib -mwindows -Wl,--entry,WinMainCRTStartup $^ -o $@ -lcomctl32 -lgdi32 -luser32 -lkernel32 -lshell32 -ladvapi32
-build/wine64/gui_smoke.exe: tests/gui_smoke.c src/resource.h build/wine64/fixture.res.o | build/wine64
-	$(WINE_CC) -Isrc -Wall -Wextra -Werror $< build/wine64/fixture.res.o -o $@ -lcomctl32 -lgdi32 -ladvapi32
+build/wine64/gui_smoke.exe: tests/gui_smoke.c tests/driver_loader.c src/driver.c src/driver.h src/resource.h driver/protocol.h build/wine64/fixture.res.o | build/wine64
+	$(WINE_CC) -Isrc -Wall -Wextra -Werror $< tests/driver_loader.c build/wine64/fixture.res.o -o $@ -lcomctl32 -lgdi32 -ladvapi32
 wine64-ui: build/wine64/taskmgr95-ui.exe build/wine64/gui_smoke.exe
 wine64-smoke: wine64-ui
 	python3 tools/run_wine_smoke.py --wine "$(WINE)"
@@ -60,7 +60,7 @@ build/process_policy_test: tests/process_policy_test.c src/process_policy.c src/
 build/wine64/system_policy_test.exe: tests/system_policy_test.c src/system.c src/system.h src/process_policy.c src/process_policy.h | build/wine64
 	$(WINE_CC) $(CPPFLAGS) $(filter-out -march=i386,$(CFLAGS)) tests/system_policy_test.c src/system.c src/process_policy.c -o $@ -ladvapi32
 
-build/wine64/fixture.res.o: tests/fixture.rc tests/fixture.ico | build/wine64
+build/wine64/fixture.res.o: tests/fixture.rc tests/fixture.ico build/tm95stat.vxd | build/wine64
 	$(WINE_RC) --preprocessor $(WINE_CC) --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED $< -o $@
 
 build/cad_policy_test: tests/cad_policy_test.c driver/cad_policy.h | build

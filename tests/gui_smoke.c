@@ -6,6 +6,7 @@
 #include <string.h>
 #include <wchar.h>
 #include "resource.h"
+int driver_loader_regression(void);
 static HWND target,performance;
 static DWORD expected_pid;
 static BOOL CALLBACK find_target(HWND w,LPARAM unused)
@@ -364,6 +365,7 @@ int main(int argc,char **argv)
     char command[1024], hold[8];
     DWORD exit_code;
     if(argc!=2) { fprintf(stderr,"usage: gui_smoke.exe path-to-taskmgr95.exe\n");return 2; }
+    verify(driver_loader_regression()==0,"VxD loader: matching name, readback, name-only fallback, cleanup and cwd");
     start.cb=sizeof(start);
     snprintf(command,sizeof(command),"\"%s\"",argv[1]);
     if(!CreateProcessA(NULL,command,NULL,NULL,FALSE,0,NULL,NULL,&start,&process)) return 2;
@@ -373,7 +375,7 @@ int main(int argc,char **argv)
     verify(target!=NULL,"application starts");
     if(!target) return 1;
     GetWindowTextW(target,title,100);
-    verify(wcsstr(title,L"alpha 9")!=NULL,"alpha 9 build is running");
+    verify(wcsstr(title,L"alpha 10")!=NULL,"alpha 10 build is running");
     GetWindowRect(target,&bounds);
     verify(bounds.right-bounds.left==400 && bounds.bottom-bounds.top==450,"initial window matches 400x450 reference");
     tab=GetDlgItem(target,301);

@@ -1,6 +1,6 @@
 #ifndef TM95_VERSION_H
 #define TM95_VERSION_H
-#define TM95_FILE_VERSION 0,1,9,0
-#define TM95_VERSION_STRING "0.1.9"
-#define TM95_BUILD_LABEL_W L"alpha 9"
+#define TM95_FILE_VERSION 0,1,10,0
+#define TM95_VERSION_STRING "0.1.10"
+#define TM95_BUILD_LABEL_W L"alpha 10"
 #endif
