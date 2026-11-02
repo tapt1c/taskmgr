@@ -5,5 +5,5 @@ option map=build/tm95test.map
 name build/tm95test.vxd
 file build/tm95probe_ddb.obj
 file build/tm95probe.obj
-segment '_LTEXT' PRELOAD NONDISCARDABLE IOPL
+segment '_LTEXT' PRELOAD NONDISCARDABLE
 export TM95_DDB.1

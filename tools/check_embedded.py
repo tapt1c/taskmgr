@@ -44,7 +44,15 @@ table,count = struct.unpack_from('<II',vxd,le+0x40)
 entry = le+struct.unpack_from('<I',vxd,le+0x5c)[0]
 assert struct.unpack_from('<BBH',vxd,entry) == (1,3,1), 'DDB needs a direct 32-bit ordinal 1 export'
 assert struct.unpack_from('<I',vxd,entry+5)[0] == 0, 'DDB export must start object 1'
-for i in range(count):
-    base,flags = struct.unpack_from('<II',vxd,le+table+24*i+4)
-    assert base == 0 and flags & 4 and flags & 0x8000, 'VxD object lacks flat/executable/IOPL attributes'
+assert count == 1, 'Expected one locked VxD object'
+page_size = struct.unpack_from('<I',vxd,le+0x28)[0]
+pages = struct.unpack_from('<I',vxd,le+0x14)[0]
+preload = struct.unpack_from('<I',vxd,le+0x84)[0]
+data_offset = struct.unpack_from('<I',vxd,le+0x80)[0]
+assert page_size == 512 and pages > 0 and preload == pages, 'Invalid VxD disk-page/preload metadata'
+assert data_offset % 4096 == 0, 'VxD payload is not page aligned'
+assert struct.unpack_from('<I',vxd,le+0x94)[0] == 0, 'VxD has an OS/2 automatic data object'
+base,flags,first,mapped,tag = struct.unpack_from('<5I',vxd,le+table+4)
+assert (base,flags,first,mapped)==(0,0x2047,1,pages), 'VxD locked-object attributes mismatch'
+assert tag == int.from_bytes(b'LCOD','little'), 'Missing locked-code class'
 print(f'PASS: RCDATA/{resource_id} embeds exact LE VxD ({length} bytes); execution NOT tested')

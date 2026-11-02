@@ -12,23 +12,48 @@ def image(path,identity):
     raw=Path(path).read_bytes()
     le=u32(raw,0x3c)
     assert raw[le:le+2]==b'LE'
-    assert u32(raw,le+0x44)==1 and u32(raw,le+0x14)==1, 'Only a single locked page is supported by this test'
+    assert u32(raw,le+0x44)==1
+    pages=u32(raw,le+0x14)
+    assert u32(raw,le+0x28)==512 and u32(raw,le+0x84)==pages and pages>0
+    assert u32(raw,le+0x94)==0
     obj=le+u32(raw,le+0x40)
     size=u32(raw,obj)
+    assert u32(raw,obj+8)==0x2047 and u32(raw,obj+16)==pages
+    assert raw[obj+20:obj+24]==b'LCOD'
     start=u32(raw,le+0x80)
-    code=bytearray(raw[start:start+size])
+    assert start%4096==0
+    initialized=(pages-1)*512+(u32(raw,le+0x2c) or 512)
+    assert 80<=initialized<=size
+    code=bytearray(size)
+    code[:initialized]=raw[start:start+initialized]
     assert code[12:20]==identity
-    assert u32(raw,obj+8)&0x8000
     entry=le+u32(raw,le+0x5c)
     assert struct.unpack_from('<BBH',raw,entry)==(1,3,1)
     assert u32(raw,entry+5)==0
     records=le+u32(raw,le+0x6c)
     page_table=le+u32(raw,le+0x68)
-    a,b=struct.unpack_from('<II',raw,page_table)
-    for pos in range(records+a,records+b,7):
-        source,flags,offset,target,value=struct.unpack_from('<BBhBH',raw,pos)
-        assert (source,flags,target)==(7,0,1), 'Unexpected LE relocation'
-        struct.pack_into('<I',code,offset,base+value)
+    applied={}
+    for page in range(pages):
+        mapping=le+u32(raw,le+0x48)+4*page
+        assert raw[mapping:mapping+4]==(page+1).to_bytes(3,'big')+b'\0'
+        a,b=struct.unpack_from('<II',raw,page_table+page*4)
+        pos=records+a
+        while pos<records+b:
+            source,flags,offset,target=struct.unpack_from('<BBhB',raw,pos)
+            assert source==7 and flags in (0,0x10) and target==1
+            value=struct.unpack_from('<I' if flags==0x10 else '<H',raw,pos+5)[0]
+            pos+=9 if flags==0x10 else 7
+            absolute=page*512+offset
+            assert 0<=absolute<=initialized-4
+            if absolute in applied:
+                assert applied[absolute][0]==value
+                applied[absolute][1].add(page)
+            else:
+                applied[absolute]=(value,{page})
+                struct.pack_into('<I',code,absolute,base+value)
+        assert pos==records+b
+    for position,(_,locations) in applied.items():
+        assert locations==set(range(position//512,(position+3)//512+1)), 'Missing boundary fixup'
     return code
 code=image('build/tm95stat.vxd',b'TM95STAT')
 uc=Uc(UC_ARCH_X86,UC_MODE_32)
